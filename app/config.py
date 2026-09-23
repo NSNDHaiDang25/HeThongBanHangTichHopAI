@@ -1,0 +1,41 @@
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
+
+
+class Settings:
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "dev-secret-change-me-please-use-a-long-random-string")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
+    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'data' / 'sales.db'}")
+
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+    # Model dự phòng, dùng lần lượt khi model chính hết lượt / quá tải (mỗi model có hạn mức riêng)
+    GEMINI_FALLBACK_MODELS: list[str] = [m.strip() for m in os.getenv(
+        "GEMINI_FALLBACK_MODELS", "gemini-3.8-flash,gemini-3.5-flash,gemini-3.5-flash-lite").split(",") if m.strip()]
+    AI_TIMEOUT_SECONDS: float = float(os.getenv("AI_TIMEOUT_SECONDS", "30"))
+    AI_MAX_RETRIES: int = int(os.getenv("AI_MAX_RETRIES", "2"))
+    ADVISOR_PROMPT_VERSION: str = os.getenv("ADVISOR_PROMPT_VERSION", "v3")
+
+    SHOP_NAME: str = os.getenv("SHOP_NAME", "Cửa hàng SalesAI")
+    # Tài khoản nhận chuyển khoản (VietQR). BIN ngân hàng: https://api.vietqr.io/v2/banks
+    VIETQR_BANK_BIN: str = os.getenv("VIETQR_BANK_BIN", "970436")
+    VIETQR_BANK_NAME: str = os.getenv("VIETQR_BANK_NAME", "Vietcombank")
+    VIETQR_ACCOUNT_NO: str = os.getenv("VIETQR_ACCOUNT_NO", "0123456789")
+    VIETQR_ACCOUNT_NAME: str = os.getenv("VIETQR_ACCOUNT_NAME", "CUA HANG SALESAI")
+
+    PROMPTS_DIR: Path = BASE_DIR / "prompts"
+    STATIC_DIR: Path = BASE_DIR / "static"
+    LOG_DIR: Path = BASE_DIR / "logs"
+    UPLOAD_DIR: Path = BASE_DIR / "data" / "uploads"
+
+
+settings = Settings()
+
+# Đường dẫn SQLite tương đối được tính theo thư mục gốc dự án, không theo thư mục đang chạy lệnh
+if settings.DATABASE_URL.startswith("sqlite:///./"):
+    settings.DATABASE_URL = "sqlite:///" + str(BASE_DIR / settings.DATABASE_URL[len("sqlite:///./"):])
