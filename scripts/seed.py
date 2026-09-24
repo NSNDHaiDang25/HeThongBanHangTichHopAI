@@ -8,7 +8,7 @@ import sys
 from datetime import date, datetime, time, timedelta
 
 from app.database import Base, SessionLocal, engine
-from app.models import Category, Customer, Product, User
+from app.models import Category, Customer, Product, User, now
 from app.schemas import ImportIn, ImportItemIn, InvoiceIn, InvoiceItemIn
 from app.security import hash_password
 from app.services import inventory
@@ -101,7 +101,7 @@ def run(seed: int = 42):
         db.flush()
         customers = db.query(Customer).all()
 
-        start_day = date.today() - timedelta(days=DAYS)
+        start_day = now().date() - timedelta(days=DAYS)
         owner, staffs = users["owner"], [users["staff"], users["staff2"]]
 
         def import_goods(day: date, qty_factor: float, supplier: str):
@@ -119,7 +119,7 @@ def run(seed: int = 42):
             weekend = day.weekday() >= 5
             for _ in range(rnd.randint(2, 7) + (3 if weekend else 0)):
                 at = datetime.combine(day, time(rnd.randint(8, 20), rnd.randint(0, 59)))
-                if at > datetime.now():
+                if at > now():
                     continue
                 picked = rnd.choices(products, weights=weights, k=rnd.choice([1, 1, 1, 2, 2, 3]))
                 items = {}

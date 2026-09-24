@@ -7,7 +7,6 @@
 Khi chưa có API key hoặc AI lỗi: bộ định tuyến rule-based chọn công cụ theo từ khóa.
 """
 import re
-from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
@@ -18,7 +17,7 @@ from app.ai.prompts import render_prompt
 from app.ai.service import (_active_products, _fallback_advise, _fallback_answer, _product_dict, clean_input,
                             detect_period, fmt_vnd, strip_accents)
 from app.config import settings
-from app.models import Product, User
+from app.models import Product, User, now
 from app.services import reports
 
 MAX_ROUNDS = 5           # số vòng gọi công cụ tối đa cho một câu hỏi, vòng cuối buộc trả lời bằng văn bản
@@ -30,7 +29,7 @@ ROLE_VI = {"admin": "Quản trị viên", "owner": "Chủ cửa hàng", "staff":
 
 
 def _prompt_vars(user: User) -> dict:
-    today = date.today()
+    today = now().date()
     manager = tools.is_manager(user)
     return {
         "shop_name": settings.SHOP_NAME, "user_name": user.full_name, "role_label": ROLE_VI.get(user.role, user.role),

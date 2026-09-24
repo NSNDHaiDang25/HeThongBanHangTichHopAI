@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.models import Invoice, Product, User
+from app.models import Invoice, Product, User, now
 from app.routers.invoices import invoice_query
 from app.security import MANAGERS
 from app.services import export, reports
@@ -53,7 +53,7 @@ def revenue(date_from: str | None = None, date_to: str | None = None,
 
 
 @router.get("/monthly")
-def monthly(year: int = Query(default_factory=lambda: date.today().year, ge=2000, le=2100),
+def monthly(year: int = Query(default_factory=lambda: now().year, ge=2000, le=2100),
             db: Session = Depends(get_db), _: User = Depends(MANAGERS)):
     return reports.revenue_by_month(db, year)
 

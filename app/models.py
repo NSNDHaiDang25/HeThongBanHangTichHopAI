@@ -1,5 +1,5 @@
 """Mô hình dữ liệu. Tiền tệ lưu dạng số nguyên (VND) để tránh sai số dấu phẩy động."""
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -11,8 +11,14 @@ PAYMENT_METHODS = ("cash", "transfer", "card", "qr")  # qr = khách quét VietQR
 CUSTOMER_GROUPS = ("regular", "vip", "wholesale")
 
 
+# Giờ cửa hàng: Việt Nam UTC+7 (không đổi giờ mùa hè). Không dùng giờ hệ thống vì máy chủ deploy
+# (Render, Docker) chạy theo UTC: phiếu tạo lúc 10:41 sẽ bị lưu thành 03:41, sau 17:00 còn sai cả ngày.
+SHOP_TZ = timezone(timedelta(hours=7), "ICT")
+
+
 def now() -> datetime:
-    return datetime.now().replace(microsecond=0)
+    """Giờ Việt Nam hiện tại, không kèm múi giờ (cùng dạng dữ liệu đã lưu). Ngày hôm nay: now().date()."""
+    return datetime.now(SHOP_TZ).replace(tzinfo=None, microsecond=0)
 
 
 class User(Base):

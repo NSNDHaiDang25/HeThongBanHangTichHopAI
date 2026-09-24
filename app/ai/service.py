@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.ai.client import AIError, GeminiClient
 from app.ai.prompts import render_prompt
-from app.models import Product
+from app.models import Product, now
 from app.services import reports
 
 ADVISOR_VERSIONS = {
@@ -266,7 +266,7 @@ def sales_report(db: Session, client: GeminiClient, date_from: str | None, date_
 # ---------------------------------------------------------------- 3. Hỏi đáp dữ liệu
 def detect_period(question: str, today: date | None = None) -> tuple[date, date, str]:
     """Xác định kỳ dữ liệu từ câu hỏi. Mặc định: tháng này."""
-    today = today or date.today()
+    today = today or now().date()
     q = strip_accents(question)
     month_start = today.replace(day=1)
     if "hom qua" in q:

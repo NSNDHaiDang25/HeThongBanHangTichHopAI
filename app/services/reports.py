@@ -9,7 +9,7 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Category, Customer, Invoice, InvoiceItem, Product
+from app.models import Category, Customer, Invoice, InvoiceItem, Product, now
 
 
 def parse_range(date_from: str | date | None, date_to: str | date | None,
@@ -20,7 +20,7 @@ def parse_range(date_from: str | date | None, date_to: str | date | None,
             return None
         return v if isinstance(v, date) else date.fromisoformat(v)
 
-    d_to = to_date(date_to) or date.today()
+    d_to = to_date(date_to) or now().date()
     d_from = to_date(date_from) or d_to - timedelta(days=default_days - 1)
     if d_from > d_to:
         d_from, d_to = d_to, d_from
@@ -126,7 +126,7 @@ def low_stock(db: Session) -> list[dict]:
 
 
 def dashboard(db: Session) -> dict:
-    today = date.today()
+    today = now().date()
     t_start, t_end = parse_range(today, today)
     m_start = datetime(today.year, today.month, 1)
     last30_start, last30_end = parse_range(None, None, 30)

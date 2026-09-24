@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.ai.service import fmt_vnd, mask_phone, strip_accents
 from app.config import settings
 from app.models import (Category, Customer, ImportItem, ImportReceipt, Invoice, InvoiceItem, Product,
-                        StockMovement, User)
+                        StockMovement, User, now)
 from app.routers.invoices import invoice_query
 from app.services import reports
 
@@ -144,7 +144,7 @@ def _date(a: dict, key: str) -> date | None:
 
 def _period(a: dict) -> tuple[datetime, datetime, dict]:
     """Kỳ dữ liệu từ date_from/date_to. Mặc định: từ đầu tháng đến hôm nay."""
-    d_to = _date(a, "date_to") or date.today()
+    d_to = _date(a, "date_to") or now().date()
     d_from = _date(a, "date_from") or d_to.replace(day=1)
     start, end = reports.parse_range(d_from, d_to)
     return start, end, {"from": start.date().isoformat(), "to": (end - timedelta(days=1)).date().isoformat(),
@@ -265,9 +265,9 @@ def get_product(db: Session, user: User, a: dict) -> dict:
     if isinstance(found, list):
         return {"note": "Có nhiều sản phẩm khớp, hãy chọn một mã cụ thể.", "matches": [_brief(p) for p in found]}
     p = found
-    start = datetime.combine(date.today() - timedelta(days=29), datetime.min.time())
+    start = datetime.combine(now().date() - timedelta(days=29), datetime.min.time())
     sold = db.scalar(select(func.coalesce(func.sum(InvoiceItem.quantity), 0)).join(Invoice)
-                     .where(InvoiceItem.product_id == p.id, *_paid(start, datetime.now() + timedelta(days=1))))
+                     .where(InvoiceItem.product_id == p.id, *_paid(start, now() + timedelta(days=1))))
     data = {**_brief(p), "description": (p.description or "")[:500], "min_stock": p.min_stock,
             "status": "đang bán" if p.status == "active" else "ngừng bán", "sold_last_30_days": int(sold)}
     if is_manager(user):
