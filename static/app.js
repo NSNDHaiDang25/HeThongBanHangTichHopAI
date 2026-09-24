@@ -219,7 +219,7 @@ function chartTheme() {
   const v = (n) => cs.getPropertyValue(n).trim();
   return {
     text: v('--text'), text2: v('--text-2'), muted: v('--muted'), surface: v('--surface'), border: v('--border-strong'),
-    grid: v('--chart-grid'), axis: v('--chart-axis'), other: v('--chart-other'),
+    line: v('--chart-line'), grid: v('--chart-grid'), axis: v('--chart-axis'), other: v('--chart-other'),
     series: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => v(`--chart-${i}`)),
   };
 }
@@ -227,11 +227,11 @@ const alpha = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba($
 const chartTooltip = (t, label) => ({ backgroundColor: t.surface, titleColor: t.text, bodyColor: t.text2, borderColor: t.border, borderWidth: 1,
   padding: 10, cornerRadius: 8, boxPadding: 4, callbacks: { label } });
 
-// Một chuỗi doanh thu (đường hoặc cột): màu chuỗi 1, lưới mờ, không cần chú thích vì tiêu đề thẻ đã nêu tên
+// Một chuỗi doanh thu (đường hoặc cột): màu chữ (đen / trắng), lưới mờ, không cần chú thích vì tiêu đề thẻ đã nêu tên
 function seriesChart(type, labels, values, t) {
-  const c = t.series[0];
+  const c = t.line;
   const ds = type === 'line'
-    ? { borderColor: c, backgroundColor: alpha(c, .12), fill: true, tension: .3, borderWidth: 2, pointRadius: 0, pointHoverRadius: 5,
+    ? { borderColor: c, backgroundColor: alpha(c, .06), fill: true, tension: .3, borderWidth: 2, pointRadius: 0, pointHoverRadius: 5,
         pointHoverBackgroundColor: c, pointHoverBorderColor: t.surface, pointHoverBorderWidth: 2 }
     : { backgroundColor: c, hoverBackgroundColor: alpha(c, .8), borderRadius: 4, borderSkipped: 'start', maxBarThickness: 32 };
   return {
@@ -651,7 +651,8 @@ async function init() {
 }
 
 // ============================================================ Tổng quan
-const kpi = (ic, color, label, value, sub = '') => `<div class="card kpi-card"><div class="kpi-icon ${color}">${icon(ic)}</div>
+// featured: thẻ chỉ số chính, đảo màu so với các thẻ còn lại
+const kpi = (ic, color, label, value, sub = '', featured = false) => `<div class="card kpi-card${featured ? ' invert' : ''}"><div class="kpi-icon ${color}">${icon(ic)}</div>
   <div class="min-w-0"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div></div>`;
 const cardHead = (ic, title, actions = '') => `<div class="card-head"><h2>${icon(ic)}${title}</h2>${actions}</div>`;
 
@@ -659,7 +660,7 @@ async function pageDashboard(page) {
   const d = await api('/reports/dashboard');
   page.innerHTML = `
     <div class="grid kpi">
-      ${kpi('wallet', '', 'Doanh thu hôm nay', money(d.today.revenue), `${d.today.invoice_count} hóa đơn`)}
+      ${kpi('wallet', '', 'Doanh thu hôm nay', money(d.today.revenue), `${d.today.invoice_count} hóa đơn`, true)}
       ${kpi('calendar', '', 'Doanh thu tháng này', money(d.month.revenue), `${d.month.invoice_count} hóa đơn`)}
       ${kpi('up', '', 'Lãi gộp tháng này', money(d.month.gross_profit), `Giá vốn ${money(d.month.cost)}`)}
       ${kpi('package', '', 'Sản phẩm đang bán', num(d.product_count), `${d.customer_count} khách hàng`)}
@@ -1698,7 +1699,7 @@ async function pageReports(page) {
     S.charts.filter((c) => c.canvas?.id !== 'c-month').forEach((c) => c.destroy());
     S.charts = S.charts.filter((c) => c.canvas?.id === 'c-month');
     const s = d.summary;
-    $('#r-body').innerHTML = `<div class="grid kpi">${kpi('wallet', '', 'Doanh thu', money(s.revenue), `${s.invoice_count} hóa đơn`)}${kpi('tag', '', 'Giảm giá', money(s.discount))}
+    $('#r-body').innerHTML = `<div class="grid kpi">${kpi('wallet', '', 'Doanh thu', money(s.revenue), `${s.invoice_count} hóa đơn`, true)}${kpi('tag', '', 'Giảm giá', money(s.discount))}
       ${kpi('package', '', 'Giá vốn', money(s.cost))}${kpi('up', '', 'Lãi gộp', money(s.gross_profit), s.revenue ? `Biên lợi nhuận ${(s.gross_profit / s.revenue * 100).toFixed(1)}%` : '')}</div>
       <div class="grid two"><div class="card">${cardHead('chart', 'Doanh thu theo ngày')}<div class="chart-box"><canvas id="c-day"></canvas></div></div>
       <div class="card">${cardHead('tag', 'Doanh thu theo nhóm hàng')}<div class="chart-box"><canvas id="c-cat"></canvas></div></div></div>
