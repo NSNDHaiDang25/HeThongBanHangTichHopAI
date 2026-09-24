@@ -28,6 +28,18 @@ class Settings:
     VIETQR_ACCOUNT_NO: str = os.getenv("VIETQR_ACCOUNT_NO", "0123456789")
     VIETQR_ACCOUNT_NAME: str = os.getenv("VIETQR_ACCOUNT_NAME", "CUA HANG SALESAI")
 
+    # Quản trị viên quên mật khẩu: mã xác nhận gửi tới ADMIN_EMAIL.
+    # Gửi qua Resend (HTTPS) nếu có RESEND_API_KEY, ngược lại qua SMTP (Gmail + mật khẩu ứng dụng).
+    # Render gói miễn phí chặn cổng SMTP nên khi deploy ở đó phải dùng Resend.
+    ADMIN_EMAIL: str = os.getenv("ADMIN_EMAIL", "").strip()
+    RESEND_API_KEY: str = os.getenv("RESEND_API_KEY", "").strip()
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER: str = os.getenv("SMTP_USER", "").strip()
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "").replace(" ", "")  # Google hiển thị mật khẩu ứng dụng có dấu cách
+    MAIL_FROM: str = os.getenv("MAIL_FROM", "").strip()  # trống: Resend dùng onboarding@resend.dev, SMTP dùng SMTP_USER
+    RESET_CODE_MINUTES: int = int(os.getenv("RESET_CODE_MINUTES", "10"))
+
     PROMPTS_DIR: Path = BASE_DIR / "prompts"
     STATIC_DIR: Path = BASE_DIR / "static"
     LOG_DIR: Path = BASE_DIR / "logs"

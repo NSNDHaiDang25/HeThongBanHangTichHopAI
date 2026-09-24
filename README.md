@@ -128,6 +128,19 @@ Mã QR được sinh ngay trên máy chủ theo chuẩn EMVCo/NAPAS, không gọ
 
 Khi nâng cấp từ bản cũ, không cần xóa dữ liệu: lúc khởi động, hệ thống tự thêm các cột mới (`image_url`, `cash_received`, `payment_ref`).
 
+## Quản trị viên quên mật khẩu (mã qua email)
+
+Ở màn hình đăng nhập, bấm **Quên mật khẩu?**, nhập tên đăng nhập quản trị viên: hệ thống gửi mã 6 số tới `ADMIN_EMAIL` (hiệu lực 10 phút, dùng một lần, sai 5 lần thì hủy, 60 giây mới gửi lại được). Chủ cửa hàng và nhân viên vẫn nhờ quản trị viên đặt lại trong menu **Người dùng**.
+
+Điền `ADMIN_EMAIL` trong `.env` và chọn một cách gửi email:
+
+| Cách gửi | Cấu hình | Dùng khi |
+|---|---|---|
+| **Resend** (HTTPS) | Đăng ký [resend.com](https://resend.com) bằng chính `ADMIN_EMAIL`, tạo API key, điền `RESEND_API_KEY` | Deploy trên **Render gói miễn phí** (Render chặn cổng SMTP) |
+| **Gmail SMTP** | Bật Xác minh 2 bước, tạo [mật khẩu ứng dụng](https://myaccount.google.com/apppasswords), điền `SMTP_USER` (địa chỉ Gmail) và `SMTP_PASSWORD` | Chạy trên máy hoặc server không chặn SMTP |
+
+Có `RESEND_API_KEY` thì hệ thống dùng Resend, ngược lại dùng SMTP. Chưa cấu hình thì nút gửi mã báo lỗi, các chức năng khác không bị ảnh hưởng.
+
 ## Đổi sang PostgreSQL
 
 ```bash

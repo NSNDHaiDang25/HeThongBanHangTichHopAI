@@ -130,12 +130,29 @@ def get_product(product_id: int, db: Session = Depends(get_db), user: User = Dep
     return product_out(p, user)
 
 
+def _category_id_by_name(db: Session, name: str) -> int | None:
+    """Tìm nhóm hàng theo tên (không phân biệt hoa thường, khoảng trắng thừa), chưa có thì tạo mới.
+    So khớp bằng Python vì lower() của SQLite không xử lý chữ có dấu tiếng Việt."""
+    name = " ".join(name.split())
+    if not name:
+        return None
+    cat = next((c for c in db.scalars(select(Category)) if c.name.casefold() == name.casefold()), None)
+    if cat is None:
+        cat = Category(name=name)
+        db.add(cat)
+        db.flush()
+    return cat.id
+
+
 @router.post("/products", status_code=201)
 def create_product(data: ProductIn, db: Session = Depends(get_db), user: User = Depends(MANAGERS)):
-    if data.category_id and db.get(Category, data.category_id) is None:
+    fields = data.model_dump(exclude={"stock", "category_name"})
+    if data.category_name is not None:
+        fields["category_id"] = _category_id_by_name(db, data.category_name)
+    elif data.category_id and db.get(Category, data.category_id) is None:
         raise HTTPException(400, "Nhóm hàng không tồn tại")
     initial_stock = data.stock
-    p = Product(**data.model_dump(exclude={"stock"}), stock=0)
+    p = Product(**fields, stock=0)
     db.add(p)
     try:
         db.flush()
@@ -156,7 +173,9 @@ def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(g
     if p is None:
         raise HTTPException(404, "Không tìm thấy sản phẩm")
     changes = data.model_dump(exclude_unset=True)
-    if changes.get("category_id") and db.get(Category, changes["category_id"]) is None:
+    if "category_name" in changes:
+        changes["category_id"] = _category_id_by_name(db, changes.pop("category_name") or "")
+    elif changes.get("category_id") and db.get(Category, changes["category_id"]) is None:
         raise HTTPException(400, "Nhóm hàng không tồn tại")
     for k, v in changes.items():
         setattr(p, k, v)

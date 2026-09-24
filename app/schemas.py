@@ -39,6 +39,16 @@ class UserCreate(BaseModel):
     role: Role = "staff"
 
 
+class ForgotPasswordIn(BaseModel):
+    username: str = Field(min_length=1, max_length=50)
+
+
+class ResetPasswordIn(BaseModel):
+    username: str = Field(min_length=1, max_length=50)
+    code: str = Field(min_length=1, max_length=12)
+    new_password: str = Field(min_length=6, max_length=128)
+
+
 class UserUpdate(BaseModel):
     full_name: str | None = None
     password: str | None = Field(default=None, min_length=6)
@@ -63,6 +73,8 @@ class ProductIn(BaseModel):
     code: str = Field(min_length=1, max_length=30)
     name: str = Field(min_length=1, max_length=200)
     category_id: int | None = None
+    # Nhập tên nhóm thay cho category_id: chưa có thì tạo mới, chuỗi rỗng = không phân nhóm
+    category_name: str | None = Field(default=None, max_length=100)
     sale_price: int = Field(ge=0)
     cost_price: int = Field(ge=0, default=0)
     stock: int = Field(ge=0, default=0)
@@ -76,6 +88,7 @@ class ProductUpdate(BaseModel):
     code: str | None = Field(default=None, min_length=1, max_length=30)
     name: str | None = Field(default=None, min_length=1, max_length=200)
     category_id: int | None = None
+    category_name: str | None = Field(default=None, max_length=100)  # như ProductIn.category_name
     sale_price: int | None = Field(default=None, ge=0)
     cost_price: int | None = Field(default=None, ge=0)
     min_stock: int | None = Field(default=None, ge=0)

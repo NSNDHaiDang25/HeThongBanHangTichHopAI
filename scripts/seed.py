@@ -14,10 +14,10 @@ from app.security import hash_password
 from app.services import inventory
 
 USERS = [
-    ("admin", "Lê Minh Quân", "admin123", "admin"),
-    ("owner", "Nguyễn Văn Chủ", "owner123", "owner"),
-    ("staff", "Trần Thị Bán", "staff123", "staff"),
-    ("staff2", "Lê Văn Hàng", "staff123", "staff"),
+    ("admin", "Quản trị viên", "admin123", "admin"),
+    ("owner", "Chủ cửa hàng", "owner123", "owner"),
+    ("staff", "Nhân viên bán hàng", "staff123", "staff"),
+    ("staff2", "Nhân viên bán hàng 2", "staff123", "staff"),
 ]
 
 CATEGORIES = [

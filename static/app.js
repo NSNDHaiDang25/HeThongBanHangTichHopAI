@@ -43,6 +43,7 @@ const ICONS = {
   clipboard: '<rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/>',
   up: '<path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/>',
   down: '<path d="m22 17-8.5-8.5-5 5L2 7"/><path d="M16 17h6v-6"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
   calendar: '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
   wallet: '<path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>',
   refresh: '<path d="M3 12a9 9 0 1 0 9-9 9.8 9.8 0 0 0-6.7 2.7L3 8"/><path d="M3 3v5h5"/>',
@@ -505,13 +506,90 @@ function readToken() {
 function showAdminHelp(title) {
   modal({
     title: `${icon('headset')} ${title}`, size: 'narrow',
-    body: `<p class="mt-0">Tài khoản SalesAI do <b>quản trị viên</b> của cửa hàng cấp. Hệ thống không tự gửi mật khẩu qua email.</p>
+    body: `<p class="mt-0">Tài khoản SalesAI do <b>quản trị viên</b> của cửa hàng cấp.</p>
       <ul class="list">
         <li>Liên hệ quản trị viên để được đặt lại mật khẩu hoặc mở khóa tài khoản.</li>
         <li>Quản trị viên vào menu <b>Người dùng</b>, chọn tài khoản, nhập mật khẩu mới rồi lưu.</li>
+        <li>Quản trị viên quên mật khẩu: bấm <b>Quên mật khẩu?</b> để nhận mã xác nhận qua email.</li>
       </ul>`,
     footer: '<button class="btn primary" data-close>Đã hiểu</button>',
   });
+}
+
+// Quên mật khẩu: quản trị viên nhận mã 6 số qua email rồi tự đặt mật khẩu mới; tài khoản khác nhờ quản trị viên.
+function forgotPassword() {
+  const login = $('#login-form');
+  let username = login.username.value.trim();
+  let timer = null;
+  const m = modal({
+    title: `${icon('lock')} Quên mật khẩu`, size: 'narrow', body: '',
+    footer: '<button class="btn" data-close>Hủy</button><button class="btn primary" id="fp-next"></button>',
+    onClose: () => clearInterval(timer),
+  });
+  const body = $('.modal-body', m.el);
+  const next = $('#fp-next', m.el);
+  const err = (msg) => { $('#fp-err', m.el).textContent = msg; };
+  const sendCode = async () => { // trả về thông báo của server, lỗi thì hiện lên form và trả về null
+    try { return (await api('/auth/forgot-password', { method: 'POST', body: { username } })).message; }
+    catch (e) { err(e.message); return null; }
+  };
+
+  const stepCode = (message) => {
+    body.innerHTML = `<p class="mt-0">${esc(message)}</p>
+      <form id="fp-form" class="stack">
+        <label>Mã xác nhận<input name="code" required inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\\d{6}" title="Mã gồm 6 chữ số" placeholder="6 chữ số"></label>
+        <label>Mật khẩu mới<input name="new_password" type="password" required minlength="6" autocomplete="new-password" placeholder="Ít nhất 6 ký tự"></label>
+        <label>Nhập lại mật khẩu mới<input name="confirm" type="password" required autocomplete="new-password"></label>
+        <p class="error m-0" id="fp-err"></p><button type="submit" hidden></button></form>
+      <p class="muted small mb-0">Không thấy email? Xem cả thư mục Spam, hoặc <button type="button" class="link-btn" id="fp-resend"></button></p>`;
+    next.textContent = 'Đổi mật khẩu';
+    const form = $('#fp-form', m.el);
+    const resend = $('#fp-resend', m.el);
+    const countdown = () => { // server chỉ gửi mã mới sau 60 giây
+      let left = 60;
+      const tick = () => { resend.disabled = left > 0; resend.textContent = left > 0 ? `gửi lại mã sau ${left} giây` : 'gửi lại mã'; };
+      tick();
+      clearInterval(timer);
+      timer = setInterval(() => { left -= 1; tick(); if (left <= 0) clearInterval(timer); }, 1000);
+    };
+    countdown();
+    resend.onclick = async () => {
+      resend.disabled = true;
+      if (await sendCode()) { err(''); toast('Đã gửi lại mã xác nhận', 'success'); countdown(); } else resend.disabled = false;
+    };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      if (form.new_password.value !== form.confirm.value) { err('Mật khẩu nhập lại không khớp'); return; }
+      next.disabled = true;
+      try {
+        const r = await api('/auth/reset-password', { method: 'POST', body: { username, code: form.code.value.trim(), new_password: form.new_password.value } });
+        m.close();
+        toast(r.message, 'success');
+        login.username.value = username;
+        login.password.value = '';
+        login.password.focus();
+      } catch (ex) { err(ex.message); next.disabled = false; }
+    };
+    next.onclick = () => form.requestSubmit();
+    form.code.focus();
+  };
+
+  body.innerHTML = `<p class="mt-0">Tài khoản <b>quản trị viên</b> có thể tự đặt lại mật khẩu bằng mã xác nhận gửi tới email quản trị.</p>
+    <form id="fp-form" class="stack"><label>Tên đăng nhập quản trị viên<input name="username" required autocomplete="username" value="${esc(username)}"></label>
+      <p class="error m-0" id="fp-err"></p></form>
+    <p class="muted small mb-0">Chủ cửa hàng và nhân viên quên mật khẩu: liên hệ quản trị viên để được đặt lại.</p>`;
+  next.textContent = 'Gửi mã';
+  const form = $('#fp-form', m.el);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    username = form.username.value.trim();
+    next.disabled = true;
+    const message = await sendCode();
+    next.disabled = false;
+    if (message) stepCode(message);
+  };
+  next.onclick = () => form.requestSubmit();
+  form.username.focus();
 }
 
 function initLoginForm() {
@@ -545,7 +623,7 @@ function initLoginForm() {
     $('#pw-toggle').setAttribute('aria-label', label);
     input.focus();
   };
-  $('#forgot-btn').onclick = () => showAdminHelp('Quên mật khẩu');
+  $('#forgot-btn').onclick = forgotPassword;
   $('#contact-admin').onclick = () => showAdminHelp('Liên hệ quản trị viên');
   $$('[data-demo]').forEach((b) => b.addEventListener('click', () => {
     const [u, p] = b.dataset.demo.split('/');
@@ -1156,10 +1234,16 @@ async function pageProducts(page) {
     $('#p-table').appendChild(pager(data.total, f.page, f.size, (p) => { f.page = p; load(); }));
   };
   const find = (id) => items.find((p) => p.id == id);
+  // Form sản phẩm có thể vừa tạo nhóm hàng mới: nạp lại danh sách nhóm cho bộ lọc
+  const afterSave = async () => {
+    await loadCategories();
+    $('#p-filter [name=category_id]').innerHTML = categoryOptions(f.category_id);
+    await load();
+  };
   $('#p-table').onclick = async (e) => {
     const b = e.target.closest('button');
     if (!b) return;
-    if (b.dataset.edit) productForm(find(b.dataset.edit), load);
+    if (b.dataset.edit) productForm(find(b.dataset.edit), afterSave);
     else if (b.dataset.adj) adjustForm(find(b.dataset.adj), load);
     else if (b.dataset.qr) qrLabels([b.dataset.qr]);
     else if (b.dataset.del) {
@@ -1169,7 +1253,7 @@ async function pageProducts(page) {
     }
   };
   $('#p-filter').onsubmit = (e) => { e.preventDefault(); Object.assign(f, formValues(e.target), { page: 1 }); load(); };
-  $('#p-add')?.addEventListener('click', () => productForm(null, load));
+  $('#p-add')?.addEventListener('click', () => productForm(null, afterSave));
   $('#p-labels')?.addEventListener('click', () => qrLabels());
   await load();
 }
@@ -1197,7 +1281,9 @@ function productForm(p, onSaved) {
           <button type="button" class="btn sm danger" id="pf-img-del">${icon('trash')} Xóa ảnh</button></div>
           <span class="muted small">JPG, PNG, WEBP hoặc GIF, tối đa 5 MB. Ảnh được thu nhỏ về 800px.</span></div></div>
       <label>Mã sản phẩm (in trên tem QR) *<input name="code" required value="${esc(p?.code)}"></label>
-      <label>Nhóm hàng<select name="category_id" data-type="int">${categoryOptions(p?.category_id, '-- Chọn nhóm --')}</select></label>
+      <label>Nhóm hàng<div class="input-icon has-action">${icon('tag')}<input name="category_name" autocomplete="off" placeholder="Chọn nhóm có sẵn hoặc gõ tên nhóm mới" value="${esc(p?.category_name)}">
+        <button type="button" class="input-action" id="pf-cat-all" tabindex="-1" aria-label="Xem tất cả nhóm hàng">${icon('chevron')}</button></div>
+        <span class="muted small" id="pf-cat-hint"></span></label>
       <label class="full">Tên sản phẩm *<input name="name" required value="${esc(p?.name)}"></label>
       <label>Giá bán (₫) *<input name="sale_price" type="number" min="0" required data-type="int" value="${p?.sale_price ?? ''}"></label>
       <label>Giá nhập (₫)<input name="cost_price" type="number" min="0" data-type="int" value="${p?.cost_price ?? 0}"></label>
@@ -1208,6 +1294,15 @@ function productForm(p, onSaved) {
       <p class="error full" id="pf-err"></p></form>`,
     footer: `<button class="btn" data-close>Hủy</button><button class="btn primary" id="pf-save">${icon('check')} Lưu</button>`,
   });
+  const catInput = $('[name=category_name]', m.el);
+  const catCombo = categoryCombo(catInput, m.el, () => {
+    const v = catInput.value.trim().replace(/\s+/g, ' ').toLowerCase();
+    const isNew = v && !S.categories.some((c) => c.name.toLowerCase() === v);
+    $('#pf-cat-hint', m.el).textContent = isNew ? 'Nhóm mới, sẽ được tạo khi lưu sản phẩm' : '';
+  });
+  const catAll = $('#pf-cat-all', m.el);
+  catAll.onmousedown = (e) => e.preventDefault(); // giữ focus ở ô nhập để danh sách không bị đóng khi blur
+  catAll.onclick = () => { if (document.activeElement === catInput) catCombo.toggle(); else catInput.focus(); };
   const preview = (url) => { $('#pf-img', m.el).innerHTML = thumb({ name: $('[name=name]', m.el).value, image_url: url }, 'lg'); };
   $('#pf-file', m.el).onchange = (e) => {
     const file = e.target.files[0];
@@ -1385,6 +1480,70 @@ function productCombo(input, products, host, onPick) {
   });
   host.addEventListener('scroll', close, true);
   return { remove: () => list.remove() };
+}
+
+// Ô nhóm hàng: bấm vào là hiện đủ các nhóm để chọn tự do (không lọc theo giá trị đang có), gõ để lọc
+// (không phân biệt dấu); tên chưa có thì cho "Tạo nhóm mới", server tạo nhóm khi lưu sản phẩm.
+function categoryCombo(input, host, onChange) {
+  const list = document.createElement('div');
+  list.className = 'combo-list hidden';
+  list.setAttribute('role', 'listbox');
+  host.appendChild(list);
+  let items = [];
+  let active = 0;
+  const open = () => !list.classList.contains('hidden');
+  const close = () => list.classList.add('hidden');
+  const highlight = () => $$('.combo-item', list).forEach((el, i) => {
+    el.classList.toggle('active', i === active);
+    if (i === active) el.scrollIntoView({ block: 'nearest' });
+  });
+  const render = (all) => {
+    const text = input.value.trim().replace(/\s+/g, ' ');
+    const words = all ? [] : plain(text).split(/\s+/).filter(Boolean);
+    items = S.categories.filter((c) => words.every((w) => plain(c.name).includes(w))).map((c) => ({ name: c.name }));
+    // So khớp có dấu như server: "Phu kien" khác "Phụ kiện" nên vẫn là nhóm mới
+    if (!all && text && !S.categories.some((c) => c.name.toLowerCase() === text.toLowerCase())) items.push({ name: text, create: true });
+    active = Math.max(0, items.findIndex((it) => it.name.toLowerCase() === text.toLowerCase()));
+    list.innerHTML = items.length ? items.map((it, i) => (it.create
+      ? `<div class="combo-item create" data-i="${i}" role="option"><span class="ico">${icon('plus')}</span><span class="grow">
+          <span class="t">Tạo nhóm mới "${esc(it.name)}"</span><span class="s">Nhóm được tạo khi lưu sản phẩm</span></span></div>`
+      : `<div class="combo-item" data-i="${i}" role="option"><span class="grow"><span class="t">${esc(it.name)}</span></span></div>`)).join('')
+      : '<div class="combo-empty">Chưa có nhóm hàng nào, gõ tên để tạo nhóm mới</div>';
+    const r = input.getBoundingClientRect();
+    Object.assign(list.style, { left: `${r.left}px`, top: `${r.bottom + 4}px`, width: `${r.width}px` });
+    list.classList.remove('hidden');
+    highlight();
+  };
+  const choose = (i) => {
+    const it = items[i];
+    if (!it) return;
+    input.value = it.name;
+    close();
+    onChange();
+  };
+  input.addEventListener('focus', () => render(true));
+  input.addEventListener('input', () => { onChange(); render(false); });
+  input.addEventListener('blur', () => setTimeout(close, 120));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!open()) { render(true); return; }
+      active = Math.max(0, Math.min(items.length - 1, active + (e.key === 'ArrowDown' ? 1 : -1)));
+      highlight();
+    } else if (e.key === 'Enter' && open() && items.length) {
+      e.preventDefault();
+      choose(active);
+    } else if (e.key === 'Escape' && open()) {
+      e.stopPropagation();
+      close();
+    }
+  });
+  list.addEventListener('mousedown', (e) => {
+    const el = e.target.closest('[data-i]');
+    if (el) { e.preventDefault(); choose(+el.dataset.i); }
+  });
+  host.addEventListener('scroll', close, true);
+  return { toggle: () => (open() ? close() : render(true)) };
 }
 
 async function importForm(onSaved) {

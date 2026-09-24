@@ -26,6 +26,18 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+class PasswordReset(Base):
+    """Mã đặt lại mật khẩu gửi qua email. Chỉ lưu mã đã băm, mã gốc chỉ có trong email."""
+    __tablename__ = "password_resets"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
 class Category(Base):
     __tablename__ = "categories"
     id: Mapped[int] = mapped_column(primary_key=True)
