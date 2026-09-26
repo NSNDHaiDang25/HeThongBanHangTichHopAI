@@ -155,3 +155,17 @@ def test_product_update_cannot_change_stock_directly(client, owner_h):
 def test_low_stock_filter(client, owner_h):
     items = client.get("/api/products", params={"stock": "out"}, headers=owner_h).json()["items"]
     assert [p["code"] for p in items] == ["PK002"]
+
+
+def test_import_quantity_and_cost_must_be_positive(client, owner_h):
+    pk1 = product_id(client, owner_h, "PK001")
+    for item in ({"product_id": pk1, "quantity": 1, "unit_cost": 0},
+                 {"product_id": pk1, "quantity": 0, "unit_cost": 1000}):
+        r = client.post("/api/imports", json={"items": [item]}, headers=owner_h)
+        assert r.status_code == 422
+        assert "Số lượng và giá nhập phải lớn hơn 0" in r.text
+    r = client.post("/api/imports", json={"items": [
+        {"new_product": {"name": "Sản phẩm mới", "sale_price": 0}, "quantity": 1, "unit_cost": 1000}]}, headers=owner_h)
+    assert r.status_code == 422
+    assert "Giá bán phải lớn hơn 0" in r.text
+    assert stock_of(client, owner_h, "PK001") == 12

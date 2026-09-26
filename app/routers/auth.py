@@ -11,7 +11,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import PasswordReset, User, now
 from app.schemas import ForgotPasswordIn, LoginIn, ResetPasswordIn, TokenOut, UserCreate, UserOut, UserUpdate
-from app.security import ADMIN_ONLY, create_token, get_current_user, hash_password, verify_password
+from app.security import ADMIN_ONLY, create_token, get_current_user, hash_password, needs_rehash, verify_password
 from app.services.mailer import MailError, mail_configured, send_mail
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -37,6 +37,9 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
         raise HTTPException(401, "Sai tên đăng nhập hoặc mật khẩu")
     if not user.is_active:
         raise HTTPException(403, "Tài khoản đã bị khóa")
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(data.password)
+        db.commit()
     return TokenOut(access_token=create_token(user), user=UserOut.model_validate(user))
 
 

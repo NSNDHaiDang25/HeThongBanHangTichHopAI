@@ -41,3 +41,36 @@ def test_failed_product_save_does_not_leave_new_category(client, owner_h):
     r = client.post("/api/products", json=new_product(code="PK001", category_name="Nhóm thừa"), headers=owner_h)
     assert r.status_code == 400
     assert categories(client, owner_h) == before
+
+
+def test_sale_price_must_be_positive(client, owner_h):
+    for price in (0, -1000):
+        r = client.post("/api/products", json=new_product(sale_price=price), headers=owner_h)
+        assert r.status_code == 422
+        assert "Giá bán phải lớn hơn 0" in r.text
+    pk1 = product_id(client, owner_h, "PK001")
+    r = client.put(f"/api/products/{pk1}", json={"sale_price": 0}, headers=owner_h)
+    assert r.status_code == 422
+    assert "Giá bán phải lớn hơn 0" in r.text
+
+
+def test_delete_product_without_transactions(client, owner_h):
+    pid = client.post("/api/products", json=new_product(), headers=owner_h).json()["id"]
+    r = client.delete(f"/api/products/{pid}", headers=owner_h)
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/products/{pid}", headers=owner_h).status_code == 404
+
+
+def test_delete_product_with_invoice_or_import_only_deactivates(client, owner_h):
+    """SRS UC003 A3: đã có trong hóa đơn hoặc phiếu nhập thì không xóa cứng, chuyển sang ngừng kinh doanh."""
+    pk1 = product_id(client, owner_h, "PK001")
+    pk3 = product_id(client, owner_h, "PK003")
+    assert client.post("/api/invoices", json={"items": [{"product_id": pk1, "quantity": 1}]},
+                       headers=owner_h).status_code == 201
+    assert client.post("/api/imports", json={"items": [{"product_id": pk3, "quantity": 5, "unit_cost": 90_000}]},
+                       headers=owner_h).status_code == 201
+    for pid in (pk1, pk3):
+        r = client.delete(f"/api/products/{pid}", headers=owner_h)
+        assert r.status_code == 200, r.text
+        assert "ngừng kinh doanh" in r.json()["message"]
+        assert client.get(f"/api/products/{pid}", headers=owner_h).json()["status"] == "inactive"

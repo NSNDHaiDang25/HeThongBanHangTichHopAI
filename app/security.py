@@ -1,8 +1,8 @@
 import hashlib
 import hmac
-import secrets
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -13,17 +13,35 @@ from app.database import get_db
 from app.models import User
 
 ALGORITHM = "HS256"
-_PBKDF2_ROUNDS = 200_000
+BCRYPT_ROUNDS = 12  # mỗi lần băm ~0,2 giây: đủ chậm để chống dò mật khẩu, đăng nhập vẫn nhanh
+_PBKDF2_ROUNDS = 200_000  # chỉ để kiểm tra mật khẩu băm theo cách cũ (trước khi dùng bcrypt)
 bearer = HTTPBearer(auto_error=False)
 
 
+def _password_bytes(password: str) -> bytes:
+    # bcrypt chỉ dùng 72 byte đầu (bcrypt 5 báo lỗi nếu dài hơn), cắt sẵn để lúc băm và lúc kiểm tra giống nhau
+    return password.encode()[:72]
+
+
 def hash_password(password: str) -> str:
-    salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), _PBKDF2_ROUNDS).hex()
-    return f"pbkdf2${salt}${digest}"
+    return bcrypt.hashpw(_password_bytes(password), bcrypt.gensalt(BCRYPT_ROUNDS)).decode()
 
 
 def verify_password(password: str, stored: str) -> bool:
+    if stored.startswith("pbkdf2$"):
+        return _verify_pbkdf2(password, stored)
+    try:
+        return bcrypt.checkpw(_password_bytes(password), stored.encode())
+    except ValueError:  # chuỗi băm hỏng
+        return False
+
+
+def needs_rehash(stored: str) -> bool:
+    """Mật khẩu còn băm theo cách cũ: băm lại bằng bcrypt ở lần đăng nhập thành công kế tiếp."""
+    return stored.startswith("pbkdf2$")
+
+
+def _verify_pbkdf2(password: str, stored: str) -> bool:
     try:
         _, salt, digest = stored.split("$")
     except ValueError:

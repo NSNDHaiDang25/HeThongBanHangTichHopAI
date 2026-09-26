@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
 from app.database import get_db
-from app.models import Category, InvoiceItem, Product, StockMovement, User
+from app.models import Category, ImportItem, InvoiceItem, Product, StockMovement, User
 from app.schemas import CategoryIn, CategoryOut, ProductIn, ProductOut, ProductUpdate, StockAdjustIn
 from app.security import ALL_STAFF, MANAGERS
 from app.services.inventory import BusinessError, adjust_stock, change_stock
@@ -192,11 +192,13 @@ def delete_product(product_id: int, db: Session = Depends(get_db), _: User = Dep
     p = db.get(Product, product_id)
     if p is None:
         raise HTTPException(404, "Không tìm thấy sản phẩm")
-    if db.scalar(select(func.count(InvoiceItem.id)).where(InvoiceItem.product_id == product_id)):
-        # Đã phát sinh giao dịch: chỉ ngừng kinh doanh để giữ lịch sử hóa đơn
+    if (db.scalar(select(func.count(InvoiceItem.id)).where(InvoiceItem.product_id == product_id))
+            or db.scalar(select(func.count(ImportItem.id)).where(ImportItem.product_id == product_id))):
+        # Đã có trong hóa đơn hoặc phiếu nhập: chỉ ngừng kinh doanh để giữ lịch sử chứng từ
         p.status = "inactive"
         db.commit()
-        return {"ok": True, "message": "Sản phẩm đã có giao dịch nên được chuyển sang ngừng kinh doanh"}
+        return {"ok": True, "message": "Sản phẩm đã có trong hóa đơn hoặc phiếu nhập nên không thể xóa, "
+                                       "đã chuyển sang ngừng kinh doanh"}
     db.query(StockMovement).filter(StockMovement.product_id == product_id).delete()
     _remove_upload(p.image_url)
     db.delete(p)

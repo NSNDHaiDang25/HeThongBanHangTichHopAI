@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Role = Literal["admin", "owner", "staff"]
 PaymentMethod = Literal["cash", "transfer", "card", "qr"]
@@ -10,6 +10,19 @@ CustomerGroup = Literal["regular", "vip", "wholesale"]
 
 class ORM(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+
+def _positive(message: str) -> AfterValidator:
+    """Số phải > 0, báo lỗi bằng câu chữ trong SRS thay cho thông báo tiếng Anh mặc định của Pydantic."""
+    def check(v: int) -> int:
+        if v <= 0:
+            raise ValueError(message)
+        return v
+    return AfterValidator(check)
+
+
+SalePrice = Annotated[int, _positive("Giá bán phải lớn hơn 0")]
+ImportAmount = Annotated[int, _positive("Số lượng và giá nhập phải lớn hơn 0")]  # số lượng / giá nhập
 
 
 # ---------- Auth / User ----------
@@ -75,7 +88,7 @@ class ProductIn(BaseModel):
     category_id: int | None = None
     # Nhập tên nhóm thay cho category_id: chưa có thì tạo mới, chuỗi rỗng = không phân nhóm
     category_name: str | None = Field(default=None, max_length=100)
-    sale_price: int = Field(ge=0)
+    sale_price: SalePrice
     cost_price: int = Field(ge=0, default=0)
     stock: int = Field(ge=0, default=0)
     min_stock: int = Field(ge=0, default=5)
@@ -89,7 +102,7 @@ class ProductUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     category_id: int | None = None
     category_name: str | None = Field(default=None, max_length=100)  # như ProductIn.category_name
-    sale_price: int | None = Field(default=None, ge=0)
+    sale_price: SalePrice | None = None
     cost_price: int | None = Field(default=None, ge=0)
     min_stock: int | None = Field(default=None, ge=0)
     description: str | None = None
@@ -202,7 +215,7 @@ class NewProductIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     code: str | None = Field(default=None, max_length=30)  # bỏ trống => tự sinh SP0001, SP0002...
     category_id: int | None = None
-    sale_price: int = Field(ge=0)
+    sale_price: SalePrice
     min_stock: int = Field(default=5, ge=0)
     description: str | None = None
 
@@ -210,8 +223,8 @@ class NewProductIn(BaseModel):
 class ImportItemIn(BaseModel):
     product_id: int | None = None
     new_product: NewProductIn | None = None
-    quantity: int = Field(gt=0)
-    unit_cost: int = Field(ge=0)
+    quantity: ImportAmount
+    unit_cost: ImportAmount
 
     @model_validator(mode="after")
     def one_product(self):

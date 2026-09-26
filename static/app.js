@@ -49,6 +49,7 @@ const ICONS = {
   refresh: '<path d="M3 12a9 9 0 1 0 9-9 9.8 9.8 0 0 0-6.7 2.7L3 8"/><path d="M3 3v5h5"/>',
   panel: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>',
   'arrow-up': '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+  expand: '<path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/>',
   camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.9 4.9 1.4 1.4"/><path d="m17.7 17.7 1.4 1.4"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.3 17.7-1.4 1.4"/><path d="m19.1 4.9-1.4 1.4"/>',
   moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
@@ -199,10 +200,42 @@ function formValues(form) {
     if (!el.name) continue;
     let v = el.type === 'checkbox' ? el.checked : el.value.trim();
     if (el.dataset.type === 'int') v = v === '' ? null : parseInt(v, 10);
+    if (el.dataset.type === 'money') v = v === '' ? (el.dataset.empty != null ? Number(el.dataset.empty) : null) : parseMoney(v);
     if (el.dataset.type === 'nullable' && v === '') v = null;
     out[el.name] = v;
   }
   return out;
+}
+
+// ---- Ô nhập tiền (VND không có số lẻ): gõ đến đâu tự thêm dấu chấm ngăn cách hàng nghìn đến đó (3000000 -> 3.000.000).
+// Dấu chấm / phẩy người dùng gõ luôn là ngăn cách hàng nghìn. Không dùng <input type="number"> vì trình duyệt hiểu
+// "3.000" là 3 (dấu thập phân) nên lưu sai giá mà không báo lỗi.
+const MONEY_MAX_DIGITS = 12;  // tối đa 999 tỉ
+const MONEY_ATTRS = 'type="text" inputmode="numeric" autocomplete="off" data-money';
+const parseMoney = (v) => {
+  const d = String(v ?? '').replace(/\D/g, '').slice(0, MONEY_MAX_DIGITS);
+  return d ? Number(d) : null;
+};
+const fmtMoneyInput = (v) => { const n = parseMoney(v); return n == null ? '' : n.toLocaleString('vi-VN'); };
+
+function onMoneyInput(e) {
+  const el = e.target;
+  if (!el.matches?.('input[data-money]')) return;
+  let raw = el.value;
+  let caret = el.selectionStart ?? raw.length;
+  // Backspace đúng vào dấu chấm: xóa luôn chữ số đứng trước, nếu không phím Backspace sẽ như "không có tác dụng"
+  if (e.inputType === 'deleteContentBackward' && raw.replace(/\D/g, '') === (el.dataset.prev || '').replace(/\D/g, '')) {
+    let i = caret - 1;
+    while (i >= 0 && !/\d/.test(raw[i])) i--;
+    if (i >= 0) { raw = raw.slice(0, i) + raw.slice(i + 1); caret = i; }
+  }
+  const digitsBeforeCaret = raw.slice(0, caret).replace(/\D/g, '').length;
+  el.value = fmtMoneyInput(raw);
+  el.dataset.prev = el.value;
+  // Giữ con trỏ đứng sau đúng chữ số vừa gõ
+  let pos = 0;
+  for (let seen = 0; pos < el.value.length && seen < digitsBeforeCaret; pos++) if (/\d/.test(el.value[pos])) seen++;
+  if (document.activeElement === el) el.setSelectionRange(pos, pos);
 }
 
 function renderMarkdown(md) {
@@ -227,11 +260,20 @@ const alpha = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba($
 const chartTooltip = (t, label) => ({ backgroundColor: t.surface, titleColor: t.text, bodyColor: t.text2, borderColor: t.border, borderWidth: 1,
   padding: 10, cornerRadius: 8, boxPadding: 4, callbacks: { label } });
 
-// Một chuỗi doanh thu (đường hoặc cột): màu chữ (đen / trắng), lưới mờ, không cần chú thích vì tiêu đề thẻ đã nêu tên
+// Vùng dưới đường doanh thu: đậm ở đỉnh, mờ dần về trục hoành
+const fadeFill = (c) => ({ chart: { ctx, chartArea: a } }) => {
+  if (!a) return alpha(c, .1);
+  const g = ctx.createLinearGradient(0, a.top, 0, a.bottom);
+  g.addColorStop(0, alpha(c, .24));
+  g.addColorStop(1, alpha(c, 0));
+  return g;
+};
+
+// Một chuỗi doanh thu (đường hoặc cột): màu blue thương hiệu, lưới mờ, không cần chú thích vì tiêu đề thẻ đã nêu tên
 function seriesChart(type, labels, values, t) {
   const c = t.line;
   const ds = type === 'line'
-    ? { borderColor: c, backgroundColor: alpha(c, .06), fill: true, tension: .3, borderWidth: 2, pointRadius: 0, pointHoverRadius: 5,
+    ? { borderColor: c, backgroundColor: fadeFill(c), fill: true, tension: .3, borderWidth: 2, pointRadius: 0, pointHoverRadius: 5,
         pointHoverBackgroundColor: c, pointHoverBorderColor: t.surface, pointHoverBorderWidth: 2 }
     : { backgroundColor: c, hoverBackgroundColor: alpha(c, .8), borderRadius: 4, borderSkipped: 'start', maxBarThickness: 32 };
   return {
@@ -427,6 +469,8 @@ async function navigate() {
   if (!S.user) return;
   let key = location.hash.slice(1).split('?')[0] || defaultRoute();
   if (!ROUTES[key] || !canAccess(key)) key = defaultRoute();
+  S.route = key;
+  AIFab.sync();
   S.charts.forEach((c) => c.destroy());
   S.charts = [];
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === key));
@@ -447,6 +491,7 @@ async function navigate() {
 function showLogin() {
   $('#app-view').classList.add('hidden');
   $('#login-view').classList.remove('hidden');
+  AIFab.sync();
 }
 
 async function startApp() {
@@ -468,7 +513,7 @@ function refreshAIBadge() {
     S.ai = s;
     const b = $('#ai-badge');
     const resting = (s.models || []).filter((m) => !m.available);
-    b.className = `badge dot ${s.enabled && s.model ? 'blue' : 'yellow'}`;
+    b.className = `badge dot ${s.enabled && s.model ? 'cyan' : 'yellow'}`;
     if (!s.enabled) {
       b.textContent = 'AI dự phòng';
       b.title = 'Chưa cấu hình GEMINI_API_KEY trong .env - AI chạy chế độ dự phòng';
@@ -641,6 +686,10 @@ async function init() {
   $('#menu-toggle').onclick = () => $('#sidebar').classList.toggle('open');
   $('#sidebar-backdrop').onclick = () => $('#sidebar').classList.remove('open');
   window.addEventListener('hashchange', navigate);
+  // Ô nhập tiền: định dạng trước (pha capture) để các xử lý oninput của từng trang đọc được giá trị đã chuẩn hóa
+  document.addEventListener('input', onMoneyInput, true);
+  document.addEventListener('focusin', (e) => { if (e.target.matches?.('input[data-money]')) e.target.dataset.prev = e.target.value; });
+  AIFab.init();
 
   S.token = readToken();
   if (!S.token) return showLogin();
@@ -651,8 +700,8 @@ async function init() {
 }
 
 // ============================================================ Tổng quan
-// featured: thẻ chỉ số chính, đảo màu so với các thẻ còn lại
-const kpi = (ic, color, label, value, sub = '', featured = false) => `<div class="card kpi-card${featured ? ' invert' : ''}"><div class="kpi-icon ${color}">${icon(ic)}</div>
+// featured: thẻ chỉ số chính, nền navy -> blue nổi bật so với các thẻ còn lại
+const kpi = (ic, color, label, value, sub = '', featured = false) => `<div class="card kpi-card${featured ? ' featured' : ''}"><div class="kpi-icon ${color}">${icon(ic)}</div>
   <div class="min-w-0"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div></div>`;
 const cardHead = (ic, title, actions = '') => `<div class="card-head"><h2>${icon(ic)}${title}</h2>${actions}</div>`;
 
@@ -686,6 +735,45 @@ function resetPOS() {
   POS.pay = { method: 'cash', cash: '', ref: '' };
 }
 
+// ---- Đơn đang bán dở lưu trên trình duyệt: tải lại trang, lỡ đóng tab hay hết phiên đăng nhập vẫn khôi phục được.
+// Chỉ lưu id + số lượng; khi khôi phục lấy lại sản phẩm từ server để đúng giá và tồn kho hiện tại.
+// Mỗi tài khoản một bản lưu riêng nên người khác đăng nhập trên cùng máy không thấy / không ghi đè. Hóa đơn đang sửa không lưu (bản gốc đã có trên server).
+const posDraftKey = () => `posDraft:${S.user?.id}`;
+function readPOSDraft() {
+  try { return S.user ? JSON.parse(localStorage.getItem(posDraftKey())) : null; } catch { return null; }
+}
+function clearPOSDraft() { try { localStorage.removeItem(posDraftKey()); } catch { /* trình duyệt chặn lưu trữ */ } }
+function savePOSDraft() {
+  if (POS.editing || !S.user) return;
+  // Giảm giá / ghi chú là ô nhập trên màn hình bán hàng; đang ở trang khác (thêm vào giỏ từ trợ lý AI) thì giữ giá trị đã lưu
+  const prev = readPOSDraft() || {};
+  const onPage = Boolean($('#disc'));
+  const d = {
+    items: [...POS.cart.values()].map((r) => [r.product.id, r.qty]),
+    customer: POS.customer,
+    method: POS.pay.method,
+    discount: onPage ? $('#disc').value : prev.discount ?? '0',
+    discountType: onPage ? $('#disc-type').value : prev.discountType ?? 'amount',
+    note: onPage ? $('#inv-note').value : prev.note ?? '',
+  };
+  if (!d.items.length && !d.customer && !/[1-9]/.test(d.discount) && !d.note.trim()) { clearPOSDraft(); return; }
+  try { localStorage.setItem(posDraftKey(), JSON.stringify(d)); } catch { /* trình duyệt chặn lưu trữ: chỉ giữ trong phiên */ }
+}
+// Trả về số sản phẩm không khôi phục được (đã xóa, ngừng bán hoặc hết hàng)
+async function restorePOSDraft(d) {
+  const items = d.items || [];
+  const products = await Promise.all(items.map(([id]) => api(`/products/${id}`).catch(() => null)));
+  let dropped = 0;
+  items.forEach(([, qty], i) => {
+    const p = products[i];
+    if (!p || p.status !== 'active' || p.stock <= 0) { dropped++; return; }
+    POS.cart.set(p.id, { product: p, qty: Math.min(qty, p.stock), max: p.stock });
+  });
+  POS.customer = d.customer || null;
+  POS.pay = { method: PAY[d.method] ? d.method : 'cash', cash: '', ref: '' };
+  return dropped;
+}
+
 function addToCart(p, qty = 1) {
   if (p.status && p.status !== 'active') { toast(`"${p.name}" đang ngừng kinh doanh`, 'error'); return false; }
   const item = POS.cart.get(p.id);
@@ -693,6 +781,7 @@ function addToCart(p, qty = 1) {
   const newQty = (item?.qty || 0) + qty;
   if (newQty > max) { toast(max > 0 ? `"${p.name}" chỉ còn ${max} sản phẩm` : `"${p.name}" đã hết hàng`, 'error'); return false; }
   POS.cart.set(p.id, { product: item?.product || p, qty: newQty, max });
+  savePOSDraft();  // cả khi thêm từ máy quét hay từ trợ lý AI ở trang khác
   return true;
 }
 
@@ -703,11 +792,22 @@ async function addByCode(code) {
   return addToCart(p) ? p : null;
 }
 
+// Ô giảm giá: theo ₫ là ô tiền (tự thêm dấu chấm), theo % thì cho gõ số lẻ (12,5).
+// convert: người dùng vừa đổi loại -> giữ con số đã gõ, chỉ đổi cách viết cho hợp loại mới
+function syncDiscMode(convert = false) {
+  const el = $('#disc');
+  const pct = $('#disc-type').value === 'percent';
+  el.toggleAttribute('data-money', !pct);
+  el.inputMode = pct ? 'decimal' : 'numeric';
+  if (convert) el.value = pct ? String(Math.min(parseMoney(el.value) ?? 0, 100)) : fmtMoneyInput(Math.round(parseFloat(el.value.replace(',', '.')) || 0));
+}
+
 function cartTotals() {
   const rows = [...POS.cart.values()];
   const subtotal = rows.reduce((s, r) => s + r.product.sale_price * r.qty, 0);
-  const dv = Math.max(0, Number($('#disc')?.value) || 0);
   const isPct = $('#disc-type')?.value === 'percent';
+  const raw = $('#disc')?.value ?? '';
+  const dv = Math.max(0, (isPct ? parseFloat(raw.replace(',', '.')) : parseMoney(raw)) || 0);
   const discount = isPct ? Math.round(subtotal * Math.min(dv, 100) / 100) : dv;
   return { rows, subtotal, discount, total: Math.max(0, subtotal - discount), over: discount > subtotal, dv, isPct };
 }
@@ -745,7 +845,7 @@ async function pagePOS(page) {
         </div>
         <div id="cart-items" class="cart-items"></div>
         <div class="discount-row">
-          <label>Giảm giá<input id="disc" type="number" min="0" value="0"></label>
+          <label>Giảm giá<input id="disc" ${MONEY_ATTRS} value="0"></label>
           <label>Loại<select id="disc-type"><option value="amount">₫</option><option value="percent">%</option></select></label>
         </div>
         <div><span class="section-label">Phương thức thanh toán</span><div class="pay-methods">${payButtons}</div></div>
@@ -794,11 +894,12 @@ async function pagePOS(page) {
     const box = $('#pay-detail');
     const cfg = S.payCfg || {};
     if (pay.method === 'cash') {
-      box.innerHTML = `<label>Tiền khách đưa<input id="cash-in" type="number" min="0" step="1000" placeholder="Bỏ trống nếu khách đưa đủ" value="${esc(pay.cash)}"></label>
+      box.innerHTML = `<label>Tiền khách đưa<input id="cash-in" ${MONEY_ATTRS} placeholder="Bỏ trống nếu khách đưa đủ" value="${fmtMoneyInput(pay.cash)}"></label>
         <div class="cash-chips" id="cash-chips"></div>
         <div class="change-row"><span>Tiền thừa trả khách</span><span id="change-out"></span></div>`;
-      $('#cash-in').oninput = (e) => { pay.cash = e.target.value; updatePayInfo(); };
-      $('#cash-chips').onclick = (e) => { const v = e.target.dataset.cash; if (v) { pay.cash = v; $('#cash-in').value = v; updatePayInfo(); } };
+      // pay.cash giữ dạng chữ số liền (không dấu chấm) để tính tiền thừa và gửi lên server
+      $('#cash-in').oninput = (e) => { pay.cash = String(parseMoney(e.target.value) ?? ''); updatePayInfo(); };
+      $('#cash-chips').onclick = (e) => { const v = e.target.dataset.cash; if (v) { pay.cash = v; $('#cash-in').value = fmtMoneyInput(v); updatePayInfo(); } };
     } else if (pay.method === 'transfer') {
       pay.ref = pay.ref || `SALESAI ${stamp()}`;
       box.innerHTML = `<div class="bank-info"><span class="k">Ngân hàng</span><span>${esc(cfg.bank_name || '')}</span>
@@ -832,6 +933,7 @@ async function pagePOS(page) {
       <div><span class="muted">Giảm giá</span><span ${t.over ? 'class="error"' : ''}>- ${money(t.discount)}</span></div>
       <div class="grand"><span>Tổng cộng</span><span>${money(t.total)}</span></div>`;
     updatePayInfo();
+    savePOSDraft();  // mọi thay đổi giỏ hàng / giảm giá đều đi qua đây
   };
   POS.renderCart = renderCart;
 
@@ -841,6 +943,7 @@ async function pagePOS(page) {
       <div class="grow"><div class="strong">${esc(c.name)}</div><div class="muted small">${esc(c.phone || '')} · ${GROUP_VI[c.group] || ''}</div></div>
       <button class="btn ghost sm icon-only" id="cust-clear" title="Bỏ chọn">${icon('x')}</button></div>` : '';
     $('#cust-clear')?.addEventListener('click', () => { POS.customer = null; renderCustomer(); });
+    savePOSDraft();
   };
 
   // Tìm kiếm; máy quét mã vạch USB gõ mã + Enter => thêm thẳng vào giỏ
@@ -888,8 +991,10 @@ async function pagePOS(page) {
     renderCart();
   };
   $('#cart-clear').onclick = () => { POS.cart.clear(); renderCart(); };
-  ['disc', 'disc-type'].forEach((id) => { $('#' + id).oninput = renderCart; });
-  $$('.pay-method').forEach((b) => b.onclick = () => { POS.pay = { method: b.dataset.pay, cash: '', ref: '' }; renderPayDetail(); });
+  $('#disc').oninput = renderCart;
+  $('#disc-type').onchange = () => { syncDiscMode(true); renderCart(); };
+  $$('.pay-method').forEach((b) => b.onclick = () => { POS.pay = { method: b.dataset.pay, cash: '', ref: '' }; renderPayDetail(); savePOSDraft(); });
+  $('#inv-note').oninput = savePOSDraft;
 
   let ct;
   $('#cust-q').oninput = () => {
@@ -937,6 +1042,7 @@ async function pagePOS(page) {
       toast(POS.editing ? 'Đã cập nhật hóa đơn' : 'Thanh toán thành công', 'success');
       const wasEditing = !!POS.editing;
       resetPOS();
+      if (!wasEditing) clearPOSDraft();
       showReceipt(inv);
       if (wasEditing) location.hash = '#invoices'; else navigate();
     } catch (e) {
@@ -946,8 +1052,26 @@ async function pagePOS(page) {
   };
 
   if (POS.editing) {
-    $('#disc').value = POS.editing.discount;
+    $('#disc').value = fmtMoneyInput(POS.editing.discount);
     $('#inv-note').value = POS.editing.note || '';
+  } else {
+    // Đơn đang bán dở: giảm giá / ghi chú luôn lấy lại; giỏ hàng chỉ khôi phục khi trống (vừa tải lại trang)
+    const draft = readPOSDraft();
+    if (draft) {
+      $('#disc-type').value = draft.discountType === 'percent' ? 'percent' : 'amount';
+      syncDiscMode();
+      $('#disc').value = draft.discountType === 'percent' ? (draft.discount ?? '0') : fmtMoneyInput(draft.discount ?? '0');
+      $('#inv-note').value = draft.note ?? '';
+      if (!POS.cart.size && (draft.items?.length || draft.customer)) {
+        const dropped = await restorePOSDraft(draft);
+        if (!document.body.contains($('#disc'))) return;  // đã chuyển sang trang khác trong lúc chờ
+        const n = [...POS.cart.values()].reduce((s, r) => s + r.qty, 0);
+        if (n || dropped) {
+          toast(`Đã khôi phục đơn đang bán dở${n ? ` (${n} sản phẩm)` : ''}`
+            + (dropped ? `. ${dropped} sản phẩm đã hết hàng hoặc ngừng bán nên được bỏ khỏi giỏ` : ''), dropped ? 'error' : 'success');
+        }
+      }
+    }
   }
   renderCustomer();
   renderPayDetail();
@@ -1031,6 +1155,7 @@ function openScanner() {
 
 async function editInvoice(inv) {
   resetPOS();
+  clearPOSDraft();  // như trước: sửa hóa đơn thay thế đơn đang bán dở
   const orig = {};
   inv.items.forEach((it) => { orig[it.product_id] = (orig[it.product_id] || 0) + it.quantity; });
   POS.editing = { id: inv.id, code: inv.code, orig, discount: inv.discount, note: inv.note };
@@ -1286,8 +1411,8 @@ function productForm(p, onSaved) {
         <button type="button" class="input-action" id="pf-cat-all" tabindex="-1" aria-label="Xem tất cả nhóm hàng">${icon('chevron')}</button></div>
         <span class="muted small" id="pf-cat-hint"></span></label>
       <label class="full">Tên sản phẩm *<input name="name" required value="${esc(p?.name)}"></label>
-      <label>Giá bán (₫) *<input name="sale_price" type="number" min="0" required data-type="int" value="${p?.sale_price ?? ''}"></label>
-      <label>Giá nhập (₫)<input name="cost_price" type="number" min="0" data-type="int" value="${p?.cost_price ?? 0}"></label>
+      <label>Giá bán (₫) *<input name="sale_price" ${MONEY_ATTRS} required data-type="money" placeholder="VD: 3.000.000" value="${fmtMoneyInput(p?.sale_price)}"></label>
+      <label>Giá nhập (₫)<input name="cost_price" ${MONEY_ATTRS} data-type="money" data-empty="0" placeholder="0" value="${fmtMoneyInput(p?.cost_price ?? 0)}"></label>
       ${p ? '' : '<label>Tồn kho đầu kỳ<input name="stock" type="number" min="0" data-type="int" value="0"></label>'}
       <label>Mức tồn tối thiểu<input name="min_stock" type="number" min="0" data-type="int" value="${p?.min_stock ?? 5}"></label>
       <label>Trạng thái<select name="status"><option value="active">Đang bán</option><option value="inactive" ${p?.status === 'inactive' ? 'selected' : ''}>Ngừng bán</option></select></label>
@@ -1316,6 +1441,8 @@ function productForm(p, onSaved) {
   $('#pf-img-del', m.el).onclick = () => { pendingFile = null; removeImage = true; preview(null); };
   $('#pf-save', m.el).onclick = async () => {
     const form = $('#pf', m.el);
+    const sale = $('[name=sale_price]', form);
+    if (!(parseMoney(sale.value) > 0)) { $('#pf-err', m.el).textContent = 'Giá bán phải lớn hơn 0'; sale.focus(); return; }
     if (!form.reportValidity()) return;
     const btn = $('#pf-save', m.el);
     btn.disabled = true;
@@ -1562,7 +1689,7 @@ async function importForm(onSaved) {
   const recalc = () => {
     let total = 0;
     $$('tr', rows).forEach((tr) => {
-      const line = (+$('[name=q]', tr).value || 0) * (+$('[name=c]', tr).value || 0);
+      const line = (+$('[name=q]', tr).value || 0) * (parseMoney($('[name=c]', tr).value) || 0);
       total += line;
       $('.line', tr).textContent = money(line);
     });
@@ -1573,9 +1700,9 @@ async function importForm(onSaved) {
     tr.innerHTML = `<td><div class="input-icon">${icon('search')}<input name="p" placeholder="Gõ tên / mã sản phẩm hoặc tên hàng mới" autocomplete="off"></div>
         <div class="im-info"></div>
         <div class="im-new hidden"><select name="cat" title="Nhóm hàng">${categoryOptions('', 'Chưa phân nhóm')}</select>
-          <input name="sale" type="number" min="0" step="1000" placeholder="Giá bán (₫)" title="Giá bán"></div></td>
+          <input name="sale" ${MONEY_ATTRS} placeholder="Giá bán (₫)" title="Giá bán"></div></td>
       <td><input name="q" type="number" min="1" value="1" class="w-full"></td>
-      <td><input name="c" type="number" min="0" step="1000" placeholder="0" class="w-full"></td>
+      <td><input name="c" ${MONEY_ATTRS} placeholder="0" class="w-full"></td>
       <td class="right line">0 ₫</td><td><button class="btn ghost sm icon-only danger" data-rm title="Xóa dòng">${icon('x')}</button></td>`;
     rows.appendChild(tr);
     const input = $('[name=p]', tr);
@@ -1588,7 +1715,7 @@ async function importForm(onSaved) {
         const pr = pick.product;
         input.value = `${pr.code} - ${pr.name}`;
         info.innerHTML = `<span class="badge">${esc(pr.code)}</span><span class="muted">Tồn hiện tại ${pr.stock} · giá bán ${money(pr.sale_price)}</span>`;
-        $('[name=c]', tr).value = pr.cost_price ?? '';
+        $('[name=c]', tr).value = fmtMoneyInput(pr.cost_price);
         $('[name=c]', tr).focus();
       } else if (pick?.name) {
         input.value = pick.name;
@@ -1620,17 +1747,19 @@ async function importForm(onSaved) {
     for (const [i, tr] of $$('tr', rows).entries()) {
       const n = i + 1;
       const q = +$('[name=q]', tr).value;
-      const cost = $('[name=c]', tr).value;
+      const cost = parseMoney($('[name=c]', tr).value) || 0;
       if (!tr.pick) { err.textContent = `Dòng ${n}: chọn sản phẩm có sẵn hoặc chọn "Thêm sản phẩm mới"`; $('[name=p]', tr).focus(); return; }
-      if (!(q > 0)) { err.textContent = `Dòng ${n}: số lượng phải lớn hơn 0`; return; }
-      if (cost === '') { err.textContent = `Dòng ${n}: nhập giá nhập`; $('[name=c]', tr).focus(); return; }
-      const item = { quantity: q, unit_cost: +cost };
+      if (!(q > 0) || !(cost > 0)) {
+        err.textContent = `Dòng ${n}: số lượng và giá nhập phải lớn hơn 0`;
+        $(q > 0 ? '[name=c]' : '[name=q]', tr).focus(); return;
+      }
+      const item = { quantity: q, unit_cost: cost };
       if (tr.pick.product) {
         item.product_id = tr.pick.product.id;
       } else {
-        const sale = $('[name=sale]', tr).value;
-        if (sale === '') { err.textContent = `Dòng ${n}: nhập giá bán cho sản phẩm mới "${tr.pick.name}"`; $('[name=sale]', tr).focus(); return; }
-        item.new_product = { name: tr.pick.name, sale_price: +sale, category_id: +$('[name=cat]', tr).value || null };
+        const sale = parseMoney($('[name=sale]', tr).value) || 0;
+        if (!(sale > 0)) { err.textContent = `Dòng ${n}: giá bán của sản phẩm mới "${tr.pick.name}" phải lớn hơn 0`; $('[name=sale]', tr).focus(); return; }
+        item.new_product = { name: tr.pick.name, sale_price: sale, category_id: +$('[name=cat]', tr).value || null };
       }
       items.push(item);
     }
@@ -1723,7 +1852,7 @@ async function pageReports(page) {
 
 // ============================================================ AI: khung chat dùng chung (trợ lý đa năng, chatbot tư vấn, hỏi đáp dữ liệu)
 function aiMeta(res) {
-  const src = res.source === 'ai' ? '<span class="badge dot blue">Gemini</span>' : '<span class="badge dot yellow">Dự phòng</span>';
+  const src = res.source === 'ai' ? '<span class="badge dot cyan">Gemini</span>' : '<span class="badge dot yellow">Dự phòng</span>';
   return `<div class="ai-meta">${src}${res.version ? `<span class="badge">Prompt ${res.version}</span>` : ''}${res.latency_ms ? `<span class="muted">${res.latency_ms} ms</span>` : ''}${res.model ? `<span class="muted">${esc(res.model)}</span>` : ''}</div>
     ${res.warning ? note(res.warning) : ''}`;
 }
@@ -1798,7 +1927,7 @@ const aiProductCard = (s) => `<div class="product-card"><div class="img">${thumb
 function aiTurnHTML(m, kind, { hideBody = false } = {}) {
   const cfg = CHAT_CFG[kind];
   const meta = m.meta || {};
-  const src = meta.source === 'ai' ? '<span class="badge dot blue">Gemini</span>' : meta.source ? '<span class="badge dot yellow">Dự phòng</span>' : '';
+  const src = meta.source === 'ai' ? '<span class="badge dot cyan">Gemini</span>' : meta.source ? '<span class="badge dot yellow">Dự phòng</span>' : '';
   let extra = '';
   if (meta.tools?.length) extra += `<div class="turn-tools">${icon('search')}Đã tra cứu: ${meta.tools.map((t) => `<span>${esc(t.label)}</span>`).join('')}</div>`;
   if (meta.suggestions?.length) extra += `<div class="product-cards">${meta.suggestions.map(aiProductCard).join('')}</div>`;
@@ -1812,6 +1941,69 @@ function aiTurnHTML(m, kind, { hideBody = false } = {}) {
       ${m.error ? '' : `<div class="turn-actions"><button class="tool" data-copy="${esc(m.content)}">${icon('copy')} Sao chép</button>
         ${time ? `<span class="sep">·</span>${time}` : ''}${meta.latency_ms ? `<span class="sep">·</span>${meta.latency_ms} ms` : ''}${meta.model ? `<span class="sep">·</span>${esc(meta.model)}` : ''}</div>`}</div>
   </div></div>`;
+}
+
+const userTurnHTML = (text) => `<div class="turn-user"><div class="bubble">${esc(text)}</div></div>`;
+const aiTypingHTML = (kind) => `<div class="turn-ai is-typing"><div class="ai-avatar">${icon('sparkles')}</div><div class="body">
+  <div class="who">${CHAT_CFG[kind].assistant}</div><div class="typing"><span></span><span></span><span></span></div></div></div>`;
+
+// Gửi câu hỏi tới AI, ghi câu trả lời vào cuộc trò chuyện st (dùng chung giữa trang chat và nút AI nổi)
+async function aiReply(kind, text, st, params = {}) {
+  const cfg = CHAT_CFG[kind];
+  const res = await api(cfg.endpoint, { method: 'POST', params, body: { ...cfg.body(text), session_id: st.sessionId } });
+  const meta = { suggestions: res.suggestions, tools: res.tools, model: res.model, source: res.source, version: res.version, warning: res.warning,
+    latency_ms: res.latency_ms, period: res.period, period_label: res.period_label };
+  const msg = { id: res.message_id, role: 'assistant', content: res.answer, meta, created_at: new Date().toISOString() };
+  Object.assign(st, { sessionId: res.session_id, title: res.session_title });
+  st.messages.push(msg);
+  if (st === S.chat[kind]) rememberChat(kind, res.session_id);
+  return msg;
+}
+
+// Cuộc trò chuyện đang mở của từng loại chat: nhớ id trên trình duyệt để tải lại trang vẫn mở lại đúng cuộc đó
+// (nội dung đã lưu trên server, chỉ cần lấy lại). Gắn với tài khoản nên người khác đăng nhập không mở được.
+const chatKey = (kind) => `chat:${S.user?.id}:${kind}`;
+function rememberChat(kind, sessionId) {
+  try {
+    if (sessionId) localStorage.setItem(chatKey(kind), String(sessionId));
+    else localStorage.removeItem(chatKey(kind));
+  } catch { /* trình duyệt chặn lưu trữ: chỉ nhớ trong phiên */ }
+}
+// Chỉ chạy một lần cho mỗi phiên đăng nhập (trang chat và nút AI nổi dùng chung một lần lấy lại),
+// và chỉ khi chưa có cuộc trò chuyện nào đang mở. st.restored = đã xong.
+function restoreChat(kind) {
+  const st = S.chat[kind];
+  st.restoring ??= (async () => {
+    let id = null;
+    try { id = Number(localStorage.getItem(chatKey(kind))) || null; } catch { /* trình duyệt chặn lưu trữ */ }
+    if (id && !st.sessionId && !st.messages.length) {
+      try {
+        const s = await api(`/ai/sessions/${id}`);
+        // Đã đăng xuất hoặc bắt đầu cuộc khác trong lúc chờ: bỏ qua
+        if (st === S.chat[kind] && !st.sessionId && !st.messages.length) Object.assign(st, { sessionId: s.id, title: s.title, messages: s.messages });
+      } catch { rememberChat(kind, null); }  // cuộc trò chuyện đã bị xóa
+    }
+    st.restored = true;
+  })();
+  return st.restoring;
+}
+
+// Hiệu ứng chữ hiện dần như AI đang viết, sau đó thay bằng Markdown đã định dạng
+async function typeOutTurn(turn, text, onStep) {
+  const el = turn.querySelector('.content');
+  const plain = text.replace(/[*_`#>|]/g, '');
+  const step = Math.max(2, Math.ceil(plain.length / 90));
+  el.classList.add('caret');
+  for (let i = 0; i < plain.length; i += step) {
+    if (!document.body.contains(el)) return;
+    el.textContent = plain.slice(0, i);
+    onStep();
+    await new Promise((r) => setTimeout(r, 16));
+  }
+  el.classList.remove('caret');
+  el.innerHTML = renderMarkdown(text);
+  turn.querySelector('.extra')?.classList.remove('hidden-soft');
+  onStep();
 }
 
 async function chatPage(page, kind) {
@@ -1864,11 +2056,16 @@ async function chatPage(page, kind) {
         <div class="suggest-grid">${(typeof cfg.suggestions === 'function' ? cfg.suggestions() : cfg.suggestions).map((x) => `<button class="suggest-item" data-q="${esc(x.q)}">${icon(x.icon)}<span><div class="s1">${esc(x.t)}</div><div class="s2">${esc(x.s)}</div></span></button>`).join('')}</div></div>`;
       return;
     }
-    thread.innerHTML = st.messages.map((m) => m.role === 'user'
-      ? `<div class="turn-user"><div class="bubble">${esc(m.content)}</div></div>`
-      : aiTurnHTML(m, kind)).join('');
+    thread.innerHTML = st.messages.map((m) => m.role === 'user' ? userTurnHTML(m.content) : aiTurnHTML(m, kind)).join('')
+      + (st.pending ? aiTypingHTML(kind) : '');  // câu hỏi gửi từ nút AI nổi vẫn đang chờ trả lời
     toBottom();
   };
+  // Câu trả lời cho câu hỏi gửi từ nơi khác (nút AI nổi) về sau khi đã mở trang này: vẽ lại
+  const onSettled = (e) => {
+    if (!document.body.contains(thread)) { document.removeEventListener('ai:settled', onSettled); return; }
+    if (e.detail.st === st && e.detail.origin !== thread) { renderThread(); syncSend(); }
+  };
+  document.addEventListener('ai:settled', onSettled);
 
   const renderList = (items) => {
     if (!items.length) {
@@ -1897,6 +2094,7 @@ async function chatPage(page, kind) {
     if (st.pending) return;
     const s = await api(`/ai/sessions/${id}`);
     Object.assign(st, { sessionId: s.id, title: s.title, messages: s.messages });
+    rememberChat(kind, s.id);
     renderThread();
     renderList(listCache);
     if (isMobile()) shell.classList.remove('show-history');
@@ -1904,28 +2102,11 @@ async function chatPage(page, kind) {
   const newChat = () => {
     if (st.pending) return;
     Object.assign(st, { sessionId: null, title: '', messages: [] });
+    rememberChat(kind, null);
     renderThread();
     renderList(listCache);
     if (isMobile()) shell.classList.remove('show-history');
     input.focus();
-  };
-
-  // Hiệu ứng chữ hiện dần như AI đang viết, sau đó thay bằng Markdown đã định dạng
-  const typeOut = async (turn, text) => {
-    const el = turn.querySelector('.content');
-    const plain = text.replace(/[*_`#>|]/g, '');
-    const step = Math.max(2, Math.ceil(plain.length / 90));
-    el.classList.add('caret');
-    for (let i = 0; i < plain.length; i += step) {
-      if (!document.body.contains(el)) return;
-      el.textContent = plain.slice(0, i);
-      toBottom();
-      await new Promise((r) => setTimeout(r, 16));
-    }
-    el.classList.remove('caret');
-    el.innerHTML = renderMarkdown(text);
-    turn.querySelector('.extra')?.classList.remove('hidden-soft');
-    toBottom();
   };
 
   const send = async (text) => {
@@ -1935,37 +2116,28 @@ async function chatPage(page, kind) {
     input.value = ''; autoGrow(); syncSend();
     if (!st.messages.length) thread.innerHTML = '';
     st.messages.push({ role: 'user', content: text, created_at: new Date().toISOString() });
-    thread.insertAdjacentHTML('beforeend', `<div class="turn-user"><div class="bubble">${esc(text)}</div></div>`);
-    thread.insertAdjacentHTML('beforeend', `<div class="turn-ai" id="ai-typing"><div class="ai-avatar">${icon('sparkles')}</div><div class="body">
-      <div class="who">${cfg.assistant}</div><div class="typing"><span></span><span></span><span></span></div></div></div>`);
+    thread.insertAdjacentHTML('beforeend', userTurnHTML(text) + aiTypingHTML(kind));
     toBottom();
     try {
-      const res = await api(cfg.endpoint, {
-        method: 'POST', params: cfg.versionSelect ? { version: $('#ai-version')?.value } : {},
-        body: { ...cfg.body(text), session_id: st.sessionId },
-      });
-      const meta = { suggestions: res.suggestions, tools: res.tools, model: res.model, source: res.source, version: res.version, warning: res.warning,
-        latency_ms: res.latency_ms, period: res.period, period_label: res.period_label };
-      const msg = { id: res.message_id, role: 'assistant', content: res.answer, meta, created_at: new Date().toISOString() };
-      Object.assign(st, { sessionId: res.session_id, title: res.session_title });
-      st.messages.push(msg);
+      const msg = await aiReply(kind, text, st, cfg.versionSelect ? { version: $('#ai-version')?.value } : {});
       if (!document.body.contains(thread)) return;
       $('#ai-title').textContent = st.title;
-      $('#ai-typing')?.remove();
+      thread.querySelector('.is-typing')?.remove();
       thread.insertAdjacentHTML('beforeend', aiTurnHTML(msg, kind, { hideBody: true }));
       // Đã có câu trả lời: mở khóa ngay, hiệu ứng gõ chữ tự dừng nếu người dùng chuyển cuộc trò chuyện
       st.pending = false;
       syncSend();
       loadList();
       refreshAIBadge();
-      await typeOut(thread.lastElementChild, res.answer);
+      await typeOutTurn(thread.lastElementChild, msg.content, toBottom);
     } catch (e) {
-      $('#ai-typing')?.remove();
+      thread.querySelector('.is-typing')?.remove();
       thread.insertAdjacentHTML('beforeend', aiTurnHTML({ role: 'assistant', content: e.message, error: true }, kind));
       toBottom();
     } finally {
       st.pending = false;
       syncSend();
+      document.dispatchEvent(new CustomEvent('ai:settled', { detail: { st, origin: thread } }));
     }
   };
 
@@ -2040,6 +2212,8 @@ async function chatPage(page, kind) {
     }
   };
 
+  await restoreChat(kind);  // vừa tải lại trang: mở lại cuộc trò chuyện đang dở
+  if (!document.body.contains(thread)) return;
   renderThread();
   updateCart();
   await loadList();
@@ -2077,6 +2251,268 @@ async function pageAIReport(page) {
 
 // ============================================================ AI: hỏi đáp dữ liệu
 function pageAsk(page) { return chatPage(page, 'ask'); }
+
+// ============================================================ Nút trợ lý AI nổi
+// Góc dưới phải mọi trang (trừ các trang chat AI): bấm để hỏi nhanh trong khung chat nhỏ mà không rời trang đang làm.
+// Dùng chung cuộc trò chuyện với trang "Trợ lý đa năng", nên bấm "Mở rộng" sẽ xem tiếp đúng cuộc trò chuyện đó.
+const AI_CHAT_ROUTES = ['assistant', 'advisor', 'ask'];
+
+const AIFab = (() => {
+  const kind = 'assistant';
+  const st = () => S.chat[kind];  // S.chat được tạo mới khi đăng xuất nên luôn đọc lại
+  let wrap, btn, pop, thread, scroller, input, sendBtn;
+  let sending = false;            // câu hỏi đang chờ là do khung này gửi
+
+  const isOpen = () => wrap && !pop.hidden;
+  const toBottom = () => { scroller.scrollTop = scroller.scrollHeight; };
+  const syncSend = () => { sendBtn.disabled = st().pending || !input.value.trim(); };
+  // +2: ô nhập có viền 1px; khi khung đang ẩn scrollHeight = 0, CSS min-height giữ chiều cao chuẩn
+  const autoGrow = () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight + 2, 120) + 'px'; };
+
+  // Gợi ý đầu tiên là hướng dẫn dùng chính trang đang mở
+  const suggestions = () => {
+    const page = ROUTES[S.route];
+    const help = page ? [{ t: `Cách dùng trang "${page.title}"`, q: `Hướng dẫn tôi cách dùng trang "${page.title}" trong phần mềm` }] : [];
+    return [...help, ...CHAT_CFG[kind].suggestions().slice(0, 3)];
+  };
+
+  const render = () => {
+    const s = st();
+    thread.innerHTML = s.messages.length
+      ? s.messages.map((m) => m.role === 'user' ? userTurnHTML(m.content) : aiTurnHTML(m, kind)).join('') + (s.pending ? aiTypingHTML(kind) : '')
+      : `<div class="ai-pop-welcome"><div class="ai-orb sm">${icon('sparkles')}</div>
+          <div class="strong">Xin chào, ${esc(S.user.full_name)}!</div>
+          <p class="muted small">Mình tra được sản phẩm, tồn kho, hóa đơn, doanh thu và hướng dẫn cách dùng phần mềm. Bạn cần giúp gì?</p>
+          <div class="ai-pop-chips">${suggestions().map((x) => `<button class="chip" data-q="${esc(x.q)}">${esc(x.t)}</button>`).join('')}</div></div>`;
+    syncSend();
+    if (s.messages.length) toBottom(); else scroller.scrollTop = 0;  // màn hình chào đọc từ trên xuống
+  };
+
+  const setOpen = (open) => {
+    pop.hidden = !open;
+    wrap.classList.toggle('open', open);
+    $('#app-view').classList.toggle('fab-open', open);
+    btn.setAttribute('aria-expanded', String(open));
+    btn.innerHTML = icon(open ? 'x' : 'sparkles');
+    btn.title = open ? 'Đóng trợ lý AI (kéo để di chuyển)' : 'Cần trợ giúp? Hỏi trợ lý AI (kéo để di chuyển)';
+    if (!open) return;
+    placePanel();
+    if (st().restored) render();
+    else {
+      thread.innerHTML = skeletonLines();  // đang lấy lại cuộc trò chuyện trước khi tải lại trang
+      restoreChat(kind).then(() => { if (isOpen() && !sending) render(); });
+    }
+    input.focus();
+  };
+
+  // ---- Vị trí nút: kéo thả tự do, thả ra thì dạt về mép trái / phải gần nhất (không che giữa trang).
+  // Vị trí lưu trên trình duyệt này: side = mép, t = độ cao theo tỉ lệ (0 sát topbar, 1 sát đáy) để giữ đúng chỗ khi đổi cỡ cửa sổ.
+  const POS_KEY = 'aiFabPos';
+  const TOPBAR_GAP = 72;  // không kéo lên che topbar (cao 60px)
+  let pos = { side: 'right', t: 1 };
+  let drag = null;
+  let justDragged = false;
+  const vw = () => document.documentElement.clientWidth;  // bỏ phần thanh cuộn
+  const vh = () => document.documentElement.clientHeight;
+  const isMobile = () => matchMedia('(max-width: 860px)').matches;
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+  const bounds = () => {
+    const size = parseFloat(getComputedStyle(btn).width);  // đọc được cả khi nút đang ẩn
+    const m = isMobile() ? 16 : 24;
+    return { size, m, minY: TOPBAR_GAP, maxY: vh() - size - m };
+  };
+
+  const loadPos = () => {
+    try {
+      const v = JSON.parse(localStorage.getItem(POS_KEY));
+      if (v && ['left', 'right'].includes(v.side) && v.t >= 0 && v.t <= 1) pos = v;
+    } catch { /* chưa lưu hoặc trình duyệt chặn: dùng vị trí mặc định */ }
+  };
+  const savePos = () => { try { localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch { /* chế độ riêng tư: chỉ nhớ trong phiên */ } };
+
+  const applyPos = () => {
+    const { size, m, minY, maxY } = bounds();
+    Object.assign(btn.style, {
+      left: `${pos.side === 'left' ? m : vw() - size - m}px`,
+      top: `${minY + pos.t * Math.max(0, maxY - minY)}px`,
+      right: 'auto', bottom: 'auto',
+    });
+    $('#app-view').classList.toggle('fab-left', pos.side === 'left');
+    if (isOpen()) placePanel();
+  };
+
+  // Khung chat mở về phía còn nhiều chỗ hơn (trên / dưới nút), bám cùng mép với nút
+  const placePanel = () => {
+    const r = btn.getBoundingClientRect();
+    const gap = 12, edge = 12;
+    const above = r.top - gap - edge, below = vh() - r.bottom - gap - edge;
+    const up = above >= below;
+    const onLeft = r.left + r.width / 2 < vw() / 2;
+    const s = pop.style;
+    s.height = `${Math.min(600, Math.max(up ? above : below, 240))}px`;
+    s.top = up ? 'auto' : `${r.bottom + gap}px`;
+    s.bottom = up ? `${vh() - r.top + gap}px` : 'auto';
+    if (isMobile()) { s.left = '8px'; s.right = '8px'; }
+    else if (onLeft) { s.left = `${r.left}px`; s.right = 'auto'; }
+    else { s.right = `${vw() - r.right}px`; s.left = 'auto'; }
+    s.transformOrigin = `${up ? 'bottom' : 'top'} ${onLeft ? 'left' : 'right'}`;
+  };
+
+  const onPointerDown = (e) => {
+    if (e.button !== 0) return;
+    // Chặn hành vi mặc định: khi nút nằm đè lên menu, Chrome sẽ tưởng đang kéo liên kết bên dưới rồi hủy thao tác kéo nút.
+    // "click" vẫn được phát bình thường nên bấm mở / đóng khung không bị ảnh hưởng.
+    e.preventDefault();
+    const r = btn.getBoundingClientRect();
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false };
+    btn.setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 5) return;  // rung tay khi bấm: vẫn tính là bấm
+    drag.moved = true;
+    btn.classList.add('dragging');
+    const { size, minY, maxY } = bounds();
+    btn.style.left = `${clamp(e.clientX - drag.dx, 0, vw() - size)}px`;
+    btn.style.top = `${clamp(e.clientY - drag.dy, minY, maxY)}px`;
+    if (isOpen()) placePanel();
+  };
+  const onPointerUp = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const { moved } = drag;
+    drag = null;
+    if (!moved) return;
+    btn.classList.remove('dragging');
+    // Trình duyệt vẫn phát "click" ngay sau khi thả: bỏ qua lần đó để không mở / đóng khung ngoài ý muốn
+    justDragged = true;
+    setTimeout(() => { justDragged = false; }, 0);
+    const r = btn.getBoundingClientRect();
+    const { minY, maxY } = bounds();
+    pos = { side: r.left + r.width / 2 < vw() / 2 ? 'left' : 'right', t: maxY > minY ? clamp((r.top - minY) / (maxY - minY), 0, 1) : 1 };
+    savePos();
+    applyPos();
+  };
+
+  const send = async (text) => {
+    const s = st();
+    text = text.trim();
+    if (!text || s.pending) return;
+    s.pending = true;
+    sending = true;
+    input.value = ''; autoGrow(); syncSend();
+    if (!s.messages.length) thread.innerHTML = '';
+    s.messages.push({ role: 'user', content: text, created_at: new Date().toISOString() });
+    thread.insertAdjacentHTML('beforeend', userTurnHTML(text) + aiTypingHTML(kind));
+    toBottom();
+    try {
+      const msg = await aiReply(kind, text, s);
+      if (s !== st()) return;  // đã đăng xuất trong lúc chờ
+      thread.querySelector('.is-typing')?.remove();
+      thread.insertAdjacentHTML('beforeend', aiTurnHTML(msg, kind, { hideBody: true }));
+      s.pending = false;
+      syncSend();
+      refreshAIBadge();
+      await typeOutTurn(thread.lastElementChild, msg.content, toBottom);
+    } catch (e) {
+      if (s !== st()) return;
+      thread.querySelector('.is-typing')?.remove();
+      thread.insertAdjacentHTML('beforeend', aiTurnHTML({ role: 'assistant', content: e.message, error: true }, kind));
+      toBottom();
+    } finally {
+      s.pending = false;
+      sending = false;
+      syncSend();
+      document.dispatchEvent(new CustomEvent('ai:settled', { detail: { st: s, origin: thread } }));
+    }
+  };
+
+  const onThreadClick = async (e) => {
+    const q = e.target.closest('[data-q]');
+    if (q) { send(q.dataset.q); return; }
+    const copy = e.target.closest('[data-copy]');
+    if (copy) { navigator.clipboard.writeText(copy.dataset.copy).then(() => toast('Đã sao chép câu trả lời', 'success')); return; }
+    const cart = e.target.closest('[data-cart]');
+    if (cart) {
+      try {
+        const p = await addByCode(cart.dataset.cart);
+        if (!p) return;
+        toast(`Đã thêm "${p.name}" vào giỏ hàng`, 'success');
+        if ($('#cart-items')) POS.renderCart?.();  // đang ở màn hình bán hàng: cập nhật giỏ ngay
+      } catch (err) { toast(err.message, 'error'); }
+    }
+  };
+
+  function init() {
+    wrap = document.createElement('div');
+    wrap.className = 'ai-fab-wrap hidden';
+    wrap.innerHTML = `
+      <section class="ai-pop" id="ai-pop" role="dialog" aria-label="Trợ lý AI" hidden>
+        <header class="ai-pop-head">
+          <div class="ai-avatar">${icon('sparkles')}</div>
+          <div class="grow"><div class="t">${CHAT_CFG[kind].assistant}</div><div class="s">Sẵn sàng hỗ trợ bạn</div></div>
+          <button type="button" class="icon-tool" id="ai-pop-new" title="Cuộc trò chuyện mới" aria-label="Cuộc trò chuyện mới">${icon('plus')}</button>
+          <a class="icon-tool" href="#assistant" title="Mở rộng toàn trang" aria-label="Mở rộng toàn trang">${icon('expand')}</a>
+          <button type="button" class="icon-tool" id="ai-pop-close" title="Đóng (Esc)" aria-label="Đóng">${icon('x')}</button>
+        </header>
+        <div class="ai-pop-scroll" id="ai-pop-scroll"><div class="ai-pop-thread" id="ai-pop-thread"></div></div>
+        <form class="ai-pop-composer" id="ai-pop-form">
+          <textarea id="ai-pop-input" rows="1" maxlength="1000" placeholder="Hỏi bất cứ điều gì..." aria-label="Câu hỏi cho trợ lý AI"></textarea>
+          <button class="send-btn" id="ai-pop-send" type="submit" title="Gửi (Enter)" aria-label="Gửi" disabled>${icon('arrow-up')}</button>
+        </form>
+      </section>
+      <button type="button" class="ai-fab" id="ai-fab-btn" aria-controls="ai-pop" aria-expanded="false"></button>`;
+    $('#app-view').appendChild(wrap);
+    btn = $('#ai-fab-btn', wrap);
+    pop = $('#ai-pop', wrap);
+    thread = $('#ai-pop-thread', wrap);
+    scroller = $('#ai-pop-scroll', wrap);
+    input = $('#ai-pop-input', wrap);
+    sendBtn = $('#ai-pop-send', wrap);
+    btn.setAttribute('aria-label', 'Mở trợ lý AI');
+    setOpen(false);
+    loadPos();
+    applyPos();
+
+    btn.onclick = () => { if (!justDragged) setOpen(!isOpen()); };
+    btn.addEventListener('pointerdown', onPointerDown);
+    btn.addEventListener('pointermove', onPointerMove);
+    btn.addEventListener('pointerup', onPointerUp);
+    btn.addEventListener('pointercancel', onPointerUp);
+    window.addEventListener('resize', applyPos);
+    $('#ai-pop-close', wrap).onclick = () => { setOpen(false); btn.focus(); };
+    $('#ai-pop-new', wrap).onclick = () => {
+      if (st().pending) return;
+      Object.assign(st(), { sessionId: null, title: '', messages: [] });
+      rememberChat(kind, null);
+      render();
+      input.focus();
+    };
+    input.oninput = () => { autoGrow(); syncSend(); };
+    input.onkeydown = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(input.value); }
+    };
+    $('#ai-pop-form', wrap).onsubmit = (e) => { e.preventDefault(); send(input.value); };
+    pop.addEventListener('keydown', (e) => { if (e.key === 'Escape') { setOpen(false); btn.focus(); } });
+    thread.onclick = onThreadClick;
+    // Câu hỏi gửi từ trang "Trợ lý đa năng" rồi chuyển trang trước khi có trả lời: vẽ lại khi câu trả lời về
+    document.addEventListener('ai:settled', (e) => {
+      if (isOpen() && !sending && e.detail.st === st() && e.detail.origin !== thread) render();
+    });
+  }
+
+  // Gọi mỗi lần chuyển trang / đăng nhập / đăng xuất: ẩn nút trên các trang chat AI (đã có khung chat riêng)
+  function sync() {
+    if (!wrap) return;
+    const show = Boolean(S.user) && !AI_CHAT_ROUTES.includes(S.route);
+    if (!show && isOpen()) setOpen(false);
+    wrap.classList.toggle('hidden', !show);
+    $('#app-view').classList.toggle('fab-visible', show);
+    if (show) applyPos();
+    if (!S.user) { input.value = ''; autoGrow(); }
+  }
+
+  return { init, sync };
+})();
 
 // ============================================================ Người dùng
 async function pageUsers(page) {

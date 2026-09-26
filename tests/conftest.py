@@ -5,11 +5,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app import security
 from app.ai.client import AIResult, ChatReply, get_ai_client
 from app.database import Base, get_db, make_engine
 from app.main import app
 from app.models import Category, Customer, Product, User
 from app.security import hash_password
+
+# Mỗi test tạo 3 tài khoản: băm bcrypt ở mức thấp nhất (4) cho nhanh, thuật toán vẫn như khi chạy thật
+security.BCRYPT_ROUNDS = 4
 
 
 class FakeAI:
