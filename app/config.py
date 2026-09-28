@@ -12,7 +12,8 @@ class Settings:
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
     DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'data' / 'sales.db'}")
 
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
+    # Bỏ cả dấu ngoặc kép / đơn: dán key kèm ngoặc vào Environment trên Render là lỗi hay gặp (Google trả 401)
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip().strip("\"'").strip()
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
     # Model dự phòng, dùng lần lượt khi model chính hết lượt / quá tải (mỗi model có hạn mức riêng)
     GEMINI_FALLBACK_MODELS: list[str] = [m.strip() for m in os.getenv(

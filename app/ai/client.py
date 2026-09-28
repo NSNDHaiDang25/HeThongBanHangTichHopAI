@@ -205,6 +205,11 @@ class GeminiClient:
                         # 400/401/403: key sai, request sai... đổi model cũng vô ích
                         msg = self._error_message(resp)
                         self._log(feature, "fail", 0, preview, msg, model)
+                        if resp.status_code in (401, 403):
+                            # Thông báo gốc của Google ("Expected OAuth 2 access token...") dễ bị hiểu nhầm là lỗi đăng nhập app
+                            raise AIError(f"Google từ chối GEMINI_API_KEY ({resp.status_code}): key sai, đã bị xóa hoặc hết hạn. "
+                                          "Tạo key mới tại aistudio.google.com/apikey rồi điền vào .env (chạy trên máy) "
+                                          "hoặc mục Environment (trên Render)", "config")
                         raise AIError(f"AI từ chối yêu cầu ({resp.status_code}): {msg}", "config")
                     last_error = AIError(f"Máy chủ AI lỗi {resp.status_code}", "error")
                 if attempt < self.max_retries:

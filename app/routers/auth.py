@@ -1,16 +1,18 @@
 import hashlib
 import hmac
+import logging
 import secrets
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
 from app.models import PasswordReset, User, now
-from app.schemas import ForgotPasswordIn, LoginIn, ResetPasswordIn, TokenOut, UserCreate, UserOut, UserUpdate
+from app.schemas import (ForgotPasswordIn, LoginIn, RegisterIn, ResetPasswordIn, TokenOut, UserCreate, UserOut,
+                         UserUpdate)
 from app.security import ADMIN_ONLY, create_token, get_current_user, hash_password, needs_rehash, verify_password
 from app.services.mailer import MailError, mail_configured, send_mail
 
@@ -19,6 +21,9 @@ router = APIRouter(prefix="/api", tags=["auth"])
 RESET_MAX_ATTEMPTS = 5     # nhập sai quá số lần này thì mã bị hủy
 RESET_RESEND_SECONDS = 60  # khoảng cách tối thiểu giữa hai lần gửi mã
 RESET_MAX_PER_HOUR = 5     # chống spam hộp thư quản trị
+REGISTER_MAX_PENDING = 20  # chống spam đăng ký: quá số tài khoản chờ duyệt thì tạm ngừng nhận đăng ký mới
+
+log = logging.getLogger(__name__)
 
 
 def _code_hash(user_id: int, code: str) -> str:
@@ -35,6 +40,8 @@ def login(data: LoginIn, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.username == data.username.strip()))
     if user is None or not verify_password(data.password, user.password_hash):
         raise HTTPException(401, "Sai tên đăng nhập hoặc mật khẩu")
+    if user.pending:
+        raise HTTPException(403, "Tài khoản đang chờ quản trị viên duyệt. Vui lòng thử lại sau khi được duyệt!")
     if not user.is_active:
         raise HTTPException(403, "Tài khoản đã bị khóa")
     if needs_rehash(user.password_hash):
@@ -104,6 +111,37 @@ def reset_password(data: ResetPasswordIn, db: Session = Depends(get_db)):
     return {"ok": True, "message": "Đã đổi mật khẩu, hãy đăng nhập bằng mật khẩu mới"}
 
 
+def _notify_new_account(username: str, full_name: str) -> None:
+    """Báo quản trị viên qua email có tài khoản mới chờ duyệt (nếu đã cấu hình gửi mail). Lỗi gửi mail không chặn đăng ký."""
+    if not (settings.ADMIN_EMAIL and mail_configured()):
+        return
+    try:
+        send_mail(settings.ADMIN_EMAIL, f"[{settings.SHOP_NAME}] Tài khoản mới chờ duyệt: {username}",
+                  f"{full_name} vừa tạo tài khoản \"{username}\" trên {settings.SHOP_NAME}.\n\n"
+                  "Đăng nhập bằng tài khoản quản trị viên, vào menu Người dùng để duyệt hoặc từ chối.")
+    except MailError as e:
+        log.warning("Không gửi được email báo tài khoản mới: %s", e)
+
+
+@router.post("/auth/register", status_code=201)
+def register(data: RegisterIn, background: BackgroundTasks, db: Session = Depends(get_db)):
+    """Tự tạo tài khoản ở màn hình đăng nhập.
+
+    Tài khoản mới là nhân viên bán hàng và bị khóa cho tới khi quản trị viên duyệt: quản trị viên vẫn là người cấp quyền
+    (UC002), người lạ tự đăng ký trên bản chạy công khai không xem được dữ liệu cửa hàng.
+    """
+    if db.scalar(select(User).where(func.lower(User.username) == data.username.lower())):
+        raise HTTPException(400, "Tên đăng nhập đã được sử dụng")
+    if db.scalar(select(func.count(User.id)).where(User.pending.is_(True))) >= REGISTER_MAX_PENDING:
+        raise HTTPException(429, "Đang có quá nhiều tài khoản chờ duyệt, vui lòng liên hệ quản trị viên")
+    user = User(username=data.username, full_name=data.full_name, role="staff", is_active=False, pending=True,
+                password_hash=hash_password(data.password))
+    db.add(user)
+    db.commit()
+    background.add_task(_notify_new_account, user.username, user.full_name)
+    return {"ok": True, "message": "Đã gửi yêu cầu tạo tài khoản. Bạn đăng nhập được sau khi quản trị viên duyệt."}
+
+
 @router.post("/auth/logout")
 def logout(_: User = Depends(get_current_user)):
     # JWT không lưu phía server: client xóa token là đăng xuất.
@@ -145,7 +183,22 @@ def update_user(user_id: int, data: UserUpdate, db: Session = Depends(get_db),
         user.role = data.role
     if data.is_active is not None:
         user.is_active = data.is_active
+        if data.is_active:
+            user.pending = False  # mở khóa tài khoản chờ duyệt = duyệt
     if data.password:
         user.password_hash = hash_password(data.password)
     db.commit()
     return user
+
+
+@router.delete("/users/{user_id}")
+def reject_user(user_id: int, db: Session = Depends(get_db), _: User = Depends(ADMIN_ONLY)):
+    """Từ chối yêu cầu tạo tài khoản. Tài khoản đã được duyệt thì chỉ khóa, không xóa, để giữ lịch sử hóa đơn."""
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "Không tìm thấy người dùng")
+    if not user.pending:
+        raise HTTPException(400, "Chỉ xóa được tài khoản đang chờ duyệt. Tài khoản đã dùng hãy khóa lại")
+    db.delete(user)
+    db.commit()
+    return {"ok": True, "message": f"Đã từ chối tài khoản {user.username}"}

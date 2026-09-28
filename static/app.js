@@ -61,6 +61,8 @@ const ICONS = {
 const icon = (name, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
 
 // ============================================================ Tiện ích chung
+// Chữ viết tắt tên cho ảnh đại diện: "Nhân viên bán hàng" -> "BH"
+const initialsOf = (name) => String(name || '?').trim().split(/\s+/).slice(-2).map((w) => w[0]).join('').toUpperCase();
 const newChatState = () => ({ sessionId: null, title: '', messages: [], pending: false, collapsed: false });
 const S = { token: null, user: null, ai: null, payCfg: null, charts: [], categories: [], chat: { assistant: newChatState(), advisor: newChatState(), ask: newChatState() } };
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -460,9 +462,19 @@ function buildNav() {
   for (const [key, r] of Object.entries(ROUTES)) {
     if (!canAccess(key)) continue;
     if (r.group !== group) { group = r.group; html += `<div class="group">${group}</div>`; }
-    html += `<a href="#${key}" data-route="${key}">${icon(r.icon)}<span>${r.title}</span></a>`;
+    const count = key === 'users' ? '<span class="nav-count hidden" id="nav-users-count"></span>' : '';
+    html += `<a href="#${key}" data-route="${key}">${icon(r.icon)}<span>${r.title}</span>${count}</a>`;
   }
   $('#nav').innerHTML = html;
+}
+
+// Số tài khoản tự đăng ký đang chờ duyệt, hiện cạnh mục "Người dùng" (chỉ quản trị viên thấy mục này)
+function setPendingCount(n) {
+  const el = $('#nav-users-count');
+  if (!el) return;
+  el.textContent = n;
+  el.title = `${n} tài khoản chờ duyệt`;
+  el.classList.toggle('hidden', !n);
 }
 
 async function navigate() {
@@ -498,10 +510,10 @@ async function startApp() {
   $('#login-view').classList.add('hidden');
   $('#app-view').classList.remove('hidden');
   const u = S.user;
-  const initials = u.full_name.split(/\s+/).slice(-2).map((w) => w[0]).join('').toUpperCase();
-  $('#user-chip').innerHTML = `<div class="avatar">${esc(initials)}</div>
+  $('#user-chip').innerHTML = `<div class="avatar">${esc(initialsOf(u.full_name))}</div>
     <div class="who"><div class="name">${esc(u.full_name)}</div>${u.full_name !== ROLE_VI[u.role] ? `<div class="role">${ROLE_VI[u.role]}</div>` : ''}</div>`;
   buildNav();
+  if (u.role === 'admin') api('/users').then((us) => setPendingCount(us.filter((x) => x.pending).length)).catch(() => {});
   refreshAIBadge();
   api('/payments/config').then((c) => { S.payCfg = c; }).catch(() => {});
   await navigate();
@@ -559,6 +571,41 @@ function showAdminHelp(title) {
       </ul>`,
     footer: '<button class="btn primary" data-close>Đã hiểu</button>',
   });
+}
+
+// Tự tạo tài khoản: là nhân viên bán hàng, đăng nhập được sau khi quản trị viên duyệt (menu Người dùng)
+function registerAccount() {
+  const m = modal({
+    title: `${icon('user')} Tạo tài khoản`, size: 'narrow',
+    body: `<form id="rg-form" class="stack">
+      <p class="muted small m-0">Tài khoản mới có vai trò <b>Nhân viên bán hàng</b> và cần quản trị viên duyệt trước khi đăng nhập.</p>
+      <label>Họ tên *<input name="full_name" required maxlength="100" autocomplete="name" placeholder="VD: Nguyễn Văn An"></label>
+      <label>Tên đăng nhập *<input name="username" required minlength="3" maxlength="50" pattern="[A-Za-z0-9._\\-]+" autocomplete="username"
+        title="Chữ không dấu, số và . _ -" placeholder="VD: nguyenvanan"></label>
+      <label>Mật khẩu *<input name="password" type="password" required minlength="6" maxlength="128" autocomplete="new-password" placeholder="Ít nhất 6 ký tự"></label>
+      <label>Nhập lại mật khẩu *<input name="confirm" type="password" required autocomplete="new-password"></label>
+      <p class="error m-0" id="rg-err"></p><button type="submit" hidden></button></form>`,
+    footer: `<button class="btn" data-close>Hủy</button><button class="btn primary" id="rg-save">${icon('check')} Tạo tài khoản</button>`,
+  });
+  const form = $('#rg-form', m.el);
+  const btn = $('#rg-save', m.el);
+  const err = (msg) => { $('#rg-err', m.el).textContent = msg; };
+  const submit = async () => {
+    err('');
+    if (!form.reportValidity()) return;
+    const v = formValues(form);
+    if (v.password !== v.confirm) { err('Mật khẩu nhập lại không khớp'); form.confirm.focus(); return; }
+    btn.disabled = true;
+    try {
+      const r = await api('/auth/register', { method: 'POST', body: { full_name: v.full_name, username: v.username, password: v.password } });
+      $('.modal-body', m.el).innerHTML = emptyState('check', 'Đã gửi yêu cầu tạo tài khoản', r.message, { compact: true });
+      $('.modal-footer', m.el).innerHTML = '<button class="btn primary" data-close>Đã hiểu</button>';
+      $('#login-form').username.value = v.username;
+    } catch (e) { err(e.message); btn.disabled = false; }
+  };
+  form.onsubmit = (e) => { e.preventDefault(); submit(); };
+  btn.onclick = submit;
+  form.full_name.focus();
 }
 
 // Quên mật khẩu: quản trị viên nhận mã 6 số qua email rồi tự đặt mật khẩu mới; tài khoản khác nhờ quản trị viên.
@@ -669,6 +716,7 @@ function initLoginForm() {
     input.focus();
   };
   $('#forgot-btn').onclick = forgotPassword;
+  $('#register-btn').onclick = registerAccount;
   $('#contact-admin').onclick = () => showAdminHelp('Liên hệ quản trị viên');
   $$('[data-demo]').forEach((b) => b.addEventListener('click', () => {
     const [u, p] = b.dataset.demo.split('/');
@@ -1266,6 +1314,7 @@ async function invoiceDetail(id, onChange) {
 // ============================================================ Khách hàng
 async function pageCustomers(page) {
   const f = { q: '', group: '', page: 1, size: 20 };
+  const mgr = isManager();
   page.innerHTML = `<div class="card">
     <form class="toolbar" id="c-filter">
       <label class="grow">Tìm kiếm<div class="input-icon">${icon('search')}<input name="q" placeholder="Tên, SĐT hoặc mã khách"></div></label>
@@ -1273,16 +1322,33 @@ async function pageCustomers(page) {
       <button class="btn">${icon('search')} Lọc</button>
       <div class="actions"><button type="button" class="btn primary" id="c-add">${icon('plus')} Thêm khách hàng</button></div>
     </form><div id="c-table">${skeletonLines()}</div></div>`;
+  let items = [];
   const load = async () => {
     const data = await api('/customers', { params: f });
-    $('#c-table').innerHTML = table(['Mã', 'Khách hàng', 'Số điện thoại', 'Nhóm', ['Số HĐ', 'right'], ['Tổng chi tiêu', 'right'], 'Mua gần nhất'],
-      data.items.map((c) => [esc(c.code), `<b>${esc(c.name)}</b>`, esc(c.phone || ''), groupBadge(c.group), c.invoice_count, money(c.total_spent), fmtDate(c.last_purchase)]),
-      { empty: 'Không có khách hàng', rowAttrs: (k) => `class="clickable" data-id="${data.items[k].id}"` });
+    items = data.items;
+    $('#c-table').innerHTML = table(['Mã', 'Khách hàng', 'Số điện thoại', 'Nhóm', ['Số HĐ', 'right'], ['Tổng chi tiêu', 'right'], 'Mua gần nhất', ['', 'right']],
+      items.map((c) => [esc(c.code), `<b>${esc(c.name)}</b>`, esc(c.phone || ''), groupBadge(c.group), c.invoice_count, money(c.total_spent), fmtDate(c.last_purchase),
+        `<div class="row-actions">
+        <button class="btn ghost sm icon-only" data-edit="${c.id}" title="Sửa">${icon('edit')}</button>
+        ${mgr ? `<button class="btn ghost sm icon-only danger" data-del="${c.id}" title="Xóa">${icon('trash')}</button>` : ''}</div>`]),
+      { empty: 'Không có khách hàng', rowAttrs: (k) => `class="clickable" data-id="${items[k].id}"` });
     $('#c-table').appendChild(pager(data.total, f.page, f.size, (p) => { f.page = p; load(); }));
   };
+  const find = (id) => items.find((c) => c.id == id);
   $('#c-filter').onsubmit = (e) => { e.preventDefault(); Object.assign(f, formValues(e.target), { page: 1 }); load(); };
   $('#c-add').onclick = () => customerForm(null, load);
-  $('#c-table').onclick = (e) => { const r = e.target.closest('tr[data-id]'); if (r) customerDetail(r.dataset.id, load); };
+  $('#c-table').onclick = async (e) => {
+    const b = e.target.closest('button');
+    if (b?.dataset.edit) return customerForm(find(b.dataset.edit), load);
+    if (b?.dataset.del) {
+      const c = find(b.dataset.del);
+      if (!await confirmBox(`Xóa khách hàng ${c.name}? Khách đã có hóa đơn sẽ không xóa được.`, { danger: true, okText: 'Xóa' })) return;
+      try { await api(`/customers/${c.id}`, { method: 'DELETE' }); toast('Đã xóa khách hàng', 'success'); load(); } catch (err) { toast(err.message, 'error'); }
+      return;
+    }
+    const r = e.target.closest('tr[data-id]');
+    if (r) customerDetail(r.dataset.id, load);
+  };
   await load();
 }
 
@@ -1291,7 +1357,7 @@ function customerForm(c, onSaved) {
     title: c ? 'Sửa khách hàng' : 'Thêm khách hàng',
     body: `<form id="cf" class="form-grid">
       <label>Họ tên *<input name="name" required value="${esc(c?.name)}"></label>
-      <label>Số điện thoại<input name="phone" data-type="nullable" value="${esc(c?.phone)}"></label>
+      <label>Số điện thoại<input name="phone" data-type="nullable" type="tel" inputmode="numeric" maxlength="10" pattern="0[0-9]{9}" title="10 chữ số, bắt đầu bằng 0" placeholder="0xxxxxxxxx" value="${esc(c?.phone)}"></label>
       <label>Email<input name="email" type="email" data-type="nullable" value="${esc(c?.email)}"></label>
       <label>Nhóm khách<select name="group">${Object.entries(GROUP_VI).map(([k, v]) => `<option value="${k}" ${c?.group === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       <label class="full">Địa chỉ<input name="address" data-type="nullable" value="${esc(c?.address)}"></label>
@@ -1943,7 +2009,7 @@ function aiTurnHTML(m, kind, { hideBody = false } = {}) {
   </div></div>`;
 }
 
-const userTurnHTML = (text) => `<div class="turn-user"><div class="bubble">${esc(text)}</div></div>`;
+const userTurnHTML = (text) => `<div class="turn-user"><div class="bubble">${esc(text)}</div><div class="avatar">${esc(initialsOf(S.user?.full_name))}</div></div>`;
 const aiTypingHTML = (kind) => `<div class="turn-ai is-typing"><div class="ai-avatar">${icon('sparkles')}</div><div class="body">
   <div class="who">${CHAT_CFG[kind].assistant}</div><div class="typing"><span></span><span></span><span></span></div></div></div>`;
 
@@ -2516,11 +2582,30 @@ const AIFab = (() => {
 
 // ============================================================ Người dùng
 async function pageUsers(page) {
-  const users = await api('/users');
+  // Tài khoản tự đăng ký đang chờ duyệt lên đầu danh sách
+  const users = (await api('/users')).sort((a, b) => b.pending - a.pending || a.id - b.id);
+  const pending = users.filter((u) => u.pending).length;
+  setPendingCount(pending);
+  const status = (u) => u.pending ? '<span class="badge dot yellow">Chờ duyệt</span>'
+    : u.is_active ? '<span class="badge dot green">Hoạt động</span>' : '<span class="badge dot red">Đã khóa</span>';
+  const actions = (u) => `<div class="row-actions">${u.pending
+    ? `<button class="btn sm primary" data-approve="${u.id}">${icon('check')} Duyệt</button><button class="btn sm danger" data-reject="${u.id}">${icon('x')} Từ chối</button>` : ''}
+    <button class="btn ghost sm icon-only" data-edit="${u.id}" title="Sửa">${icon('edit')}</button></div>`;
   page.innerHTML = `<div class="card w-lg">${cardHead('shield', `Người dùng (${users.length})`, `<button class="btn primary" id="u-add">${icon('plus')} Thêm người dùng</button>`)}
+    ${pending ? note(`${pending} tài khoản tự đăng ký đang chờ duyệt. Duyệt thì tài khoản đăng nhập được với vai trò Nhân viên bán hàng (đổi vai trò bằng nút Sửa).`) : ''}
     ${table(['Tên đăng nhập', 'Họ tên', 'Vai trò', 'Trạng thái', ['', 'right']], users.map((u) => [`<b>${esc(u.username)}</b>`, esc(u.full_name), ROLE_VI[u.role],
-      u.is_active ? '<span class="badge dot green">Hoạt động</span>' : '<span class="badge dot red">Đã khóa</span>',
-      `<div class="row-actions"><button class="btn ghost sm icon-only" data-edit="${u.id}" title="Sửa">${icon('edit')}</button></div>`]))}</div>`;
+      status(u), actions(u)]))}</div>`;
+  $$('[data-approve]', page).forEach((b) => b.onclick = async () => {
+    const u = users.find((x) => x.id == b.dataset.approve);
+    try { await api(`/users/${u.id}`, { method: 'PUT', body: { is_active: true } }); toast(`Đã duyệt tài khoản ${u.username}`, 'success'); navigate(); }
+    catch (e) { toast(e.message, 'error'); }
+  });
+  $$('[data-reject]', page).forEach((b) => b.onclick = async () => {
+    const u = users.find((x) => x.id == b.dataset.reject);
+    if (!await confirmBox(`Từ chối và xóa yêu cầu tạo tài khoản "${u.username}" (${u.full_name})?`, { danger: true, okText: 'Từ chối' })) return;
+    try { const r = await api(`/users/${u.id}`, { method: 'DELETE' }); toast(r.message, 'success'); navigate(); }
+    catch (e) { toast(e.message, 'error'); }
+  });
   const form = (u) => {
     const m = modal({
       title: u ? `Sửa người dùng ${esc(u.username)}` : 'Thêm người dùng',
@@ -2529,7 +2614,7 @@ async function pageUsers(page) {
         <label>Họ tên *<input name="full_name" required value="${esc(u?.full_name)}"></label>
         <label>Vai trò<select name="role">${Object.entries(ROLE_VI).map(([k, v]) => `<option value="${k}" ${u?.role === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
         <label>${u ? 'Mật khẩu mới (bỏ trống nếu không đổi)' : 'Mật khẩu *'}<input name="password" type="password" minlength="6" ${u ? 'data-type="nullable"' : 'required'}></label>
-        ${u ? `<label class="checkbox"><input type="checkbox" name="is_active" ${u.is_active ? 'checked' : ''}> Đang hoạt động</label>` : ''}
+        ${u ? `<label class="checkbox"><input type="checkbox" name="is_active" ${u.is_active ? 'checked' : ''}> ${u.pending ? 'Duyệt, cho phép đăng nhập' : 'Đang hoạt động'}</label>` : ''}
         <p class="error full" id="uf-err"></p></form>`,
       footer: `<button class="btn" data-close>Hủy</button><button class="btn primary" id="uf-save">${icon('check')} Lưu</button>`,
     });

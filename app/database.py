@@ -32,6 +32,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 # Cột được thêm sau phiên bản đầu. create_all() không sửa bảng đã có nên bổ sung bằng ALTER TABLE,
 # giúp CSDL cũ vẫn chạy mà không phải xóa dữ liệu.
 ADDED_COLUMNS = {
+    "users": {"pending": "BOOLEAN NOT NULL DEFAULT FALSE"},
     "products": {"image_url": "VARCHAR(255)"},
     "invoices": {"cash_received": "INTEGER", "payment_ref": "VARCHAR(50)"},
 }

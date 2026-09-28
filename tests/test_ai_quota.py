@@ -191,3 +191,19 @@ def test_status_reports_active_model(client, owner_h, fake_ai):
     assert s["model"] == "fake-model" and s["models"][0]["available"]
     fake_ai.available = False
     assert client.get("/api/ai/status", headers=owner_h).json()["model"] is None
+
+
+def test_invalid_key_explains_how_to_fix_and_stops():
+    """401/403 từ Google (key sai / đã xóa): báo rõ là do GEMINI_API_KEY, không thử model khác vô ích."""
+    calls = []
+
+    def handler(req):
+        calls.append(model_of(req))
+        return httpx.Response(401, json={"error": {"code": 401, "status": "UNAUTHENTICATED",
+                                                   "message": "Request had invalid authentication credentials. Expected OAuth 2 access token"}})
+
+    with pytest.raises(AIError) as e:
+        make(handler).generate("sys", "hi")
+    assert "GEMINI_API_KEY" in str(e.value) and "OAuth" not in str(e.value)
+    assert e.value.kind == "config"
+    assert calls == ["a"]

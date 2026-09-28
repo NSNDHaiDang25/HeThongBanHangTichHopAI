@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Annotated, Literal
 
@@ -37,6 +38,7 @@ class UserOut(ORM):
     full_name: str
     role: Role
     is_active: bool
+    pending: bool = False
 
 
 class TokenOut(BaseModel):
@@ -50,6 +52,29 @@ class UserCreate(BaseModel):
     full_name: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=6)
     role: Role = "staff"
+
+
+class RegisterIn(BaseModel):
+    """Tự tạo tài khoản ở màn hình đăng nhập (chờ quản trị viên duyệt)."""
+    username: str = Field(min_length=3, max_length=50)
+    full_name: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=6, max_length=128)
+
+    @field_validator("username")
+    @classmethod
+    def username_chars(cls, v: str):
+        v = v.strip()
+        if not re.fullmatch(r"[A-Za-z0-9._-]{3,50}", v):
+            raise ValueError("Tên đăng nhập gồm 3-50 ký tự: chữ không dấu, số và . _ -")
+        return v
+
+    @field_validator("full_name")
+    @classmethod
+    def full_name_not_blank(cls, v: str):
+        v = " ".join(v.split())
+        if not v:
+            raise ValueError("Vui lòng nhập họ tên")
+        return v
 
 
 class ForgotPasswordIn(BaseModel):
@@ -143,9 +168,9 @@ class CustomerIn(BaseModel):
     @classmethod
     def phone_digits(cls, v: str | None):
         if v:
-            v = v.strip().replace(" ", "")
-            if not v.lstrip("+").isdigit() or not 8 <= len(v.lstrip("+")) <= 15:
-                raise ValueError("Số điện thoại không hợp lệ")
+            v = re.sub(r"[\s.\-]", "", v)
+            if not re.fullmatch(r"0\d{9}", v):
+                raise ValueError("Số điện thoại phải gồm 10 chữ số, bắt đầu bằng 0")
         return v or None
 
 

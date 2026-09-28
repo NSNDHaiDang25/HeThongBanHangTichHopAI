@@ -29,6 +29,8 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(200))
     role: Mapped[str] = mapped_column(String(20), default="staff")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Tự đăng ký ở màn hình đăng nhập: bị khóa và chờ quản trị viên duyệt (phân biệt với tài khoản bị khóa thường)
+    pending: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
