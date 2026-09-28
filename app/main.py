@@ -56,3 +56,9 @@ app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads"
 @app.get("/", include_in_schema=False)
 def index():
     return FileResponse(settings.STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    # Trình duyệt tự gọi /favicon.ico ở các trang không khai báo icon (ví dụ /docs)
+    return FileResponse(settings.STATIC_DIR / "img" / "favicon.svg", media_type="image/svg+xml")
