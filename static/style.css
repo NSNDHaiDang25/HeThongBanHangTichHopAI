@@ -103,14 +103,14 @@
   --warning-soft: #fef3c7;
   --warning-text: #92400e;
 
-  /* Khung: sidebar và topbar cùng tông kem với nền trang, mục menu đang chọn là thanh navy */
+  /* Khung: sidebar và topbar cùng tông kem với nền trang, mục menu đang chọn là nền xanh nhạt, chữ navy */
   --sidebar-bg: #fcf5e3;
   --sidebar-edge: #ecdfc2;
   --topbar-bg: #fcf5e3;
-  --nav-active-bg: var(--ink-900);
-  --nav-active-text: #ffffff;
-  --nav-active-icon: #ffffff;
-  --nav-active-edge: var(--sky-500);
+  --nav-active-bg: #dfe7f8;
+  --nav-active-text: var(--ink-700);
+  --nav-active-icon: var(--blue-700);
+  --nav-active-edge: var(--blue-600);
   /* Ô sản phẩm và nhãn tồn kho đặc (màn hình bán hàng) */
   --tile-bg: #fffcf5;
   --stock-bg: #45d6cc; --stock-text: #063b40;   /* còn hàng */
@@ -340,8 +340,7 @@ nav a { display: flex; gap: var(--space-3); align-items: center; height: var(--c
 nav a:hover, nav a:focus-visible { background: var(--hover); color: var(--text); text-decoration: none; }
 /* Menu không có viền focus: bàn phím di chuyển vẫn thấy nhờ nền hover */
 nav a:focus-visible { outline: none; }
-/* Mục đang chọn: nền blue nhạt dần sang phải, vạch cyan bên trái, icon cyan */
-/* Mục đang chọn: thanh navy đặc (sáng) / blue mờ dần (tối), vạch sáng bên trái */
+/* Mục đang chọn: nền xanh nhạt, chữ navy (sáng) / blue mờ dần, chữ trắng (tối); vạch màu bên trái */
 nav a.active { background: var(--nav-active-bg); color: var(--nav-active-text); font-weight: 600; box-shadow: inset 3px 0 0 var(--nav-active-edge); }
 nav a.active .i { color: var(--nav-active-icon); }
 /* Số việc cần xử lý cạnh mục menu (tài khoản chờ duyệt) */
