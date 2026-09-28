@@ -20,6 +20,9 @@ class Settings:
     GEMINI_FALLBACK_MODELS: list[str] = [m.strip() for m in os.getenv(
         "GEMINI_FALLBACK_MODELS",
         "gemini-3.8-flash,gemini-3.7-flash,gemini-3.5-flash,gemini-3.5-flash-lite").split(",") if m.strip()]
+    # Mức suy nghĩ của Gemini trước khi trả lời: minimal (nhanh nhất) | low | medium | high (chậm, kỹ nhất).
+    # Để trống = theo mặc định của model (thường là high, chậm hơn nhiều).
+    AI_THINKING_LEVEL: str = os.getenv("AI_THINKING_LEVEL", "minimal").strip().lower()
     AI_TIMEOUT_SECONDS: float = float(os.getenv("AI_TIMEOUT_SECONDS", "30"))
     AI_MAX_RETRIES: int = int(os.getenv("AI_MAX_RETRIES", "2"))
     ADVISOR_PROMPT_VERSION: str = os.getenv("ADVISOR_PROMPT_VERSION", "v3")

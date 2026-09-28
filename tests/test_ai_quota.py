@@ -1,4 +1,5 @@
 """Test hạn mức Gemini: tự chuyển model dự phòng khi hết lượt / quá tải, thông báo rõ, không thử lại vô ích."""
+import json
 from datetime import datetime, timezone
 
 import httpx
@@ -31,9 +32,9 @@ def model_of(req: httpx.Request) -> str:
     return req.url.path.split("/models/")[1].split(":")[0]
 
 
-def make(handler, models=("a", "b", "c"), retries=2, clock=None):
+def make(handler, models=("a", "b", "c"), retries=2, clock=None, thinking_level="low"):
     return GeminiClient(api_key="k", model=models[0], fallback_models=list(models[1:]), timeout=1, max_retries=retries,
-                        transport=httpx.MockTransport(handler), clock=clock or Clock())
+                        transport=httpx.MockTransport(handler), clock=clock or Clock(), thinking_level=thinking_level)
 
 
 @pytest.fixture(autouse=True)
@@ -100,17 +101,74 @@ def test_minute_limit_message_when_no_other_model():
     assert e.value.kind == "rate_limit" and "42 giây" in str(e.value)
 
 
-def test_server_busy_retries_then_switches():
+def test_overloaded_model_switches_immediately():
     calls = []
 
     def handler(req):
         calls.append(model_of(req))
         return httpx.Response(503, json={"error": {"message": "high demand"}}) if calls[-1] == "a" else httpx.Response(200, json=OK)
 
+    c = make(handler, retries=2)
+    assert c.generate("s", "u").model == "b"
+    assert calls == ["a", "b"]  # 503 quá tải: chuyển model ngay, không thử lại
+    assert c.status()["models"][0]["reason"] == "busy"
+
+
+def test_timeout_switches_immediately():
+    calls = []
+
+    def handler(req):
+        calls.append(model_of(req))
+        if calls[-1] == "a":
+            raise httpx.ReadTimeout("slow", request=req)
+        return httpx.Response(200, json=OK)
+
+    c = make(handler, retries=2)
+    assert c.generate("s", "u").model == "b"
+    assert calls == ["a", "b"]  # timeout: không chờ thêm lần nữa
+    assert c.status()["models"][0]["reason"] == "busy"
+
+
+def test_other_server_error_retries_then_switches():
+    calls = []
+
+    def handler(req):
+        calls.append(model_of(req))
+        return httpx.Response(500, json={"error": {"message": "internal"}}) if calls[-1] == "a" else httpx.Response(200, json=OK)
+
     c = make(handler, retries=1)
     assert c.generate("s", "u").model == "b"
-    assert calls == ["a", "a", "b"]  # 5xx: thử lại cùng model theo cấu hình rồi mới chuyển
+    assert calls == ["a", "a", "b"]  # 5xx khác: thử lại cùng model theo cấu hình rồi mới chuyển
     assert c.status()["models"][0]["reason"] == "busy"
+
+
+def test_thinking_level_is_sent():
+    sent = []
+
+    def handler(req):
+        sent.append(json.loads(req.content)["generationConfig"])
+        return httpx.Response(200, json=OK)
+
+    make(handler, thinking_level="low").generate("s", "u")
+    make(handler, thinking_level="").generate("s", "u")
+    assert sent[0]["thinkingConfig"] == {"thinkingLevel": "low"}
+    assert "thinkingConfig" not in sent[1]  # để trống: theo mặc định của model
+
+
+def test_model_rejecting_thinking_level_is_resent_without_it():
+    sent = []
+
+    def handler(req):
+        config = json.loads(req.content)["generationConfig"]
+        sent.append("thinkingConfig" in config)
+        if "thinkingConfig" in config:
+            return httpx.Response(400, json={"error": {"message": "Thinking level is not supported for this model."}})
+        return httpx.Response(200, json=OK)
+
+    c = make(handler, thinking_level="minimal")
+    assert c.generate("s", "u").model == "a"
+    c.generate("s", "u")
+    assert sent == [True, False, False]  # gửi lại không kèm tùy chọn và nhớ cho lần sau
 
 
 def test_discontinued_model_is_skipped():

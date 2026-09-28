@@ -72,17 +72,19 @@ class GeminiClient:
     def __init__(self, api_key: str | None = None, model: str | None = None,
                  timeout: float | None = None, max_retries: int | None = None,
                  transport: httpx.BaseTransport | None = None, fallback_models: list[str] | None = None,
-                 clock=time.time):
+                 clock=time.time, thinking_level: str | None = None):
         self.api_key = api_key if api_key is not None else settings.GEMINI_API_KEY
         self.model = model or settings.GEMINI_MODEL
         fallbacks = settings.GEMINI_FALLBACK_MODELS if fallback_models is None else fallback_models
         self.models = list(dict.fromkeys([self.model, *fallbacks]))  # model chính trước, bỏ trùng
         self.timeout = timeout or settings.AI_TIMEOUT_SECONDS
         self.max_retries = settings.AI_MAX_RETRIES if max_retries is None else max_retries
+        self.thinking_level = settings.AI_THINKING_LEVEL if thinking_level is None else thinking_level
         self._transport = transport
         self._clock = clock
         # model -> (thời điểm dùng lại được, lý do: day | minute | busy | gone)
         self._resting: dict[str, tuple[float, str]] = {}
+        self._no_thinking: set[str] = set()  # model từ chối tùy chọn mức suy nghĩ: gửi không kèm tùy chọn này
 
     @property
     def enabled(self) -> bool:
@@ -163,7 +165,9 @@ class GeminiClient:
 
         - 429 hết lượt trong ngày: model nghỉ đến khi hạn mức làm mới, chuyển model kế tiếp (không thử lại).
         - 429 theo phút: model nghỉ đúng số giây Google yêu cầu, chuyển model kế tiếp.
-        - Timeout / 5xx: thử lại cùng model (backoff), vẫn lỗi thì nghỉ 60 giây và chuyển model.
+        - Timeout / 503 (Google báo quá tải): nghỉ 60 giây và chuyển model NGAY, vì thử lại lúc quá tải
+          thường chỉ tốn thêm vài chục giây chờ.
+        - 5xx khác, lỗi mạng: thử lại cùng model (backoff), vẫn lỗi thì nghỉ 60 giây và chuyển model.
         - 404 (model ngừng hỗ trợ): bỏ model đó. 400/401/403: lỗi cấu hình (key sai...), dừng ngay.
         """
         if not self.enabled:
@@ -179,10 +183,16 @@ class GeminiClient:
             url = GEMINI_URL.format(model=model)
             for attempt in range(self.max_retries + 1):
                 try:
-                    with httpx.Client(timeout=self.timeout, transport=self._transport) as http:
-                        resp = http.post(url, headers=headers, json=body)
+                    resp = self._send(url, headers, self._payload(body, model))
+                    if (resp.status_code == 400 and self.thinking_level and model not in self._no_thinking
+                            and "thinking" in self._error_message(resp).lower()):
+                        # Model không hỗ trợ tùy chọn mức suy nghĩ: gửi lại không kèm, ghi nhớ cho các lần sau
+                        self._no_thinking.add(model)
+                        resp = self._send(url, headers, self._payload(body, model))
                 except httpx.TimeoutException:
                     last_error = AIError("AI phản hồi quá lâu (timeout)", "timeout")
+                    self._busy(model, last_error, feature, preview, started)
+                    break
                 except httpx.HTTPError as e:
                     last_error = AIError(f"Không kết nối được AI: {e.__class__.__name__}", "error")
                 else:
@@ -211,17 +221,36 @@ class GeminiClient:
                                           "Tạo key mới tại aistudio.google.com/apikey rồi điền vào .env (chạy trên máy) "
                                           "hoặc mục Environment (trên Render)", "config")
                         raise AIError(f"AI từ chối yêu cầu ({resp.status_code}): {msg}", "config")
+                    if resp.status_code == 503:
+                        last_error = AIError(f"Model {model} đang quá tải", "error")
+                        self._busy(model, last_error, feature, preview, started)
+                        break
                     last_error = AIError(f"Máy chủ AI lỗi {resp.status_code}", "error")
                 if attempt < self.max_retries:
                     time.sleep(min(2 ** attempt, 8))  # backoff 1s, 2s, 4s...
             else:
-                # hết lượt thử vì timeout / 5xx: cho model nghỉ một lúc, chuyển model kế tiếp
-                self._rest(model, 60, "busy")
-                self._log(feature, last_error.kind, int((time.perf_counter() - started) * 1000), preview, str(last_error), model)
+                # hết lượt thử vì lỗi mạng / 5xx: cho model nghỉ một lúc, chuyển model kế tiếp
+                self._busy(model, last_error, feature, preview, started)
 
         if only is None and not self.available_models() and last_error and last_error.kind in ("rate_limit", "quota_day"):
             raise self._all_resting_error()
         raise last_error
+
+    def _send(self, url: str, headers: dict, payload: dict) -> httpx.Response:
+        with httpx.Client(timeout=self.timeout, transport=self._transport) as http:
+            return http.post(url, headers=headers, json=payload)
+
+    def _payload(self, body: dict, model: str) -> dict:
+        """Gắn mức suy nghĩ vào request, trừ model đã từ chối tùy chọn này."""
+        if not self.thinking_level or model in self._no_thinking:
+            return body
+        config = {**body.get("generationConfig", {}), "thinkingConfig": {"thinkingLevel": self.thinking_level}}
+        return {**body, "generationConfig": config}
+
+    def _busy(self, model: str, error: AIError, feature: str, preview: str, started: float) -> None:
+        """Model quá tải / quá chậm: nghỉ 60 giây để câu hỏi này và các câu sau dùng model kế tiếp."""
+        self._rest(model, 60, "busy")
+        self._log(feature, error.kind, int((time.perf_counter() - started) * 1000), preview, str(error), model)
 
     def _on_quota(self, model: str, resp: httpx.Response) -> AIError:
         """Đọc chi tiết lỗi 429: hết lượt trong ngày hay chỉ quá nhanh trong phút."""
