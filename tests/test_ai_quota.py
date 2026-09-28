@@ -177,6 +177,16 @@ def test_assistant_restarts_on_other_model_when_quota_runs_out_mid_question(clie
     assert body["model"] == "fake-model"
 
 
+def test_assistant_keeps_switching_models_until_one_answers(client, owner_h, fake_ai):
+    """Model 3.6 rồi 3.8 lần lượt hết lượt giữa chừng: vẫn làm lại trên model kế tiếp, không rơi về dự phòng."""
+    call = [{"name": "list_categories", "args": {}}]
+    out = AIError("Model hết lượt gọi miễn phí hôm nay", "quota_day")
+    fake_ai.chat_script = [call, out, call, out, "Cửa hàng có 1 nhóm hàng"]
+    body = client.post("/api/ai/assistant", json={"message": "Có mấy nhóm hàng?"}, headers=owner_h).json()
+    assert body["source"] == "ai" and body["answer"] == "Cửa hàng có 1 nhóm hàng"
+    assert len(fake_ai.calls) == 5
+
+
 def test_assistant_falls_back_when_no_model_left(client, owner_h, fake_ai):
     fake_ai.available = False
     fake_ai.chat_script = [[{"name": "list_categories", "args": {}}],

@@ -529,9 +529,14 @@ function refreshAIBadge() {
     if (!s.enabled) {
       b.textContent = 'AI dự phòng';
       b.title = 'Chưa cấu hình GEMINI_API_KEY trong .env - AI chạy chế độ dự phòng';
-    } else if (!s.model) {
+    } else if (!s.model && resting.every((m) => m.reason === 'day' || m.reason === 'gone')) {
+      const day = resting.find((m) => m.until);
       b.textContent = 'AI hết lượt hôm nay';
-      b.title = `Đã dùng hết lượt gọi Gemini miễn phí của mọi model${resting[0]?.until ? `, làm mới lúc ${resting[0].until}` : ''}. Tạm thời trả lời bằng chế độ dự phòng.`;
+      b.title = `Đã dùng hết lượt gọi Gemini miễn phí của mọi model${day ? `, làm mới lúc ${day.until}` : ''}. Tạm thời trả lời bằng chế độ dự phòng.`;
+    } else if (!s.model) {
+      // Có model chỉ nghỉ ngắn (Google quá tải / giới hạn theo phút): vài phút sau tự dùng lại được
+      b.textContent = 'AI đang quá tải';
+      b.title = `Các model Gemini đang quá tải hoặc bị giới hạn tần suất, thường chỉ khoảng 1 phút. Tạm thời trả lời bằng chế độ dự phòng.\nĐang nghỉ: ${resting.map((m) => `${m.model}${m.until ? ` (đến ${m.until})` : ''}`).join(', ')}`;
     } else {
       b.textContent = `AI: ${s.model}`;
       b.title = 'Đang dùng Gemini API' + (resting.length ? `\nĐang nghỉ: ${resting.map((m) => `${m.model}${m.until ? ` (đến ${m.until})` : ''}`).join(', ')}` : '');

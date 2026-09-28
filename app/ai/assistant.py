@@ -25,6 +25,7 @@ MAX_CALLS_PER_ROUND = 6  # số công cụ tối đa thực thi trong một vòn
 MAX_CARDS = 4
 # Lỗi mà đổi sang model khác có thể khắc phục (hết lượt, quá tải, mạng chậm)
 SWITCHABLE = ("quota_day", "rate_limit", "error", "timeout")
+MAX_MODEL_SWITCHES = 4   # số lần làm lại câu hỏi trên model khác khi model đang dùng hết lượt giữa chừng
 ROLE_VI = {"admin": "Quản trị viên", "owner": "Chủ cửa hàng", "staff": "Nhân viên bán hàng"}
 
 
@@ -79,14 +80,16 @@ def reply(db: Session, client: GeminiClient, user: User, message: str, history: 
     system, user_text = render_prompt("assistant", message=message, **_prompt_vars(user))
     declarations = tools.declarations(tools.available(user))
     contents = _history_contents(history or []) + [{"role": "user", "parts": [{"text": user_text}]}]
-    for attempt in range(2):
+    for attempt in range(MAX_MODEL_SWITCHES + 1):
         try:
             r, used, product_codes, latency = _tool_loop(db, client, user, system, contents, declarations)
             break
         except AIError as e:
             # Model đang dùng hết lượt / quá tải GIỮA CHỪNG câu hỏi: làm lại câu hỏi từ đầu trên model khác
             # (chữ ký suy luận của model này không dùng được cho model khác nên không thể nối tiếp).
-            if attempt == 0 and getattr(e, "mid_loop", False) and e.kind in SWITCHABLE and client.has_available_model():
+            # Model lỗi đã bị cho nghỉ nên mỗi lần làm lại rơi vào model kế tiếp trong chuỗi dự phòng.
+            if (attempt < MAX_MODEL_SWITCHES and getattr(e, "mid_loop", False) and e.kind in SWITCHABLE
+                    and client.has_available_model()):
                 continue
             return {**fallback(db, user, message), "source": "fallback", "warning": f"{e} - chuyển sang trả lời dự phòng."}
 
