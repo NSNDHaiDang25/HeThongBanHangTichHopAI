@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.ai import tools
-from app.ai.client import AIError, GeminiClient
+from app.ai.client import AIError, GeminiClient, off_reason
 from app.ai.prompts import render_prompt
 from app.ai.service import (_active_products, _fallback_advise, _fallback_answer, _product_dict, clean_input,
                             detect_period, fmt_vnd, strip_accents)
@@ -26,7 +26,7 @@ MAX_CARDS = 4
 # Lỗi mà đổi sang model khác có thể khắc phục (hết lượt, quá tải, mạng chậm)
 SWITCHABLE = ("quota_day", "rate_limit", "error", "timeout")
 MAX_MODEL_SWITCHES = 4   # số lần làm lại câu hỏi trên model khác khi model đang dùng hết lượt giữa chừng
-ROLE_VI = {"admin": "Quản trị viên", "owner": "Chủ cửa hàng", "staff": "Nhân viên bán hàng"}
+ROLE_VI = {"admin": "Quản trị viên", "owner": "Chủ cửa hàng", "staff": "Thu ngân"}
 
 
 def _prompt_vars(user: User) -> dict:
@@ -37,8 +37,8 @@ def _prompt_vars(user: User) -> dict:
         "today": today.strftime("%d/%m/%Y (%Y-%m-%d)"), "weekday": tools.WEEKDAYS_VI[today.weekday()],
         "manager_scope": (", doanh thu, lợi nhuận, xu hướng bán hàng, bán chạy / bán chậm, tồn kho, nhập hàng, "
                           "khách hàng thân thiết" if manager else ""),
-        "role_rules": ("- Người dùng là quản lý, được xem toàn bộ số liệu kinh doanh." if manager else
-                       "- Vai trò nhân viên KHÔNG xem được doanh thu toàn cửa hàng, lợi nhuận, giá vốn, báo cáo tồn kho, "
+        "role_rules": ("- Người dùng là chủ cửa hàng, được xem toàn bộ số liệu kinh doanh." if manager else
+                       "- Vai trò thu ngân KHÔNG xem được doanh thu toàn cửa hàng, lợi nhuận, giá vốn, báo cáo tồn kho, "
                        "lịch sử nhập hàng và chỉ tra được hóa đơn do chính mình lập. Nếu được hỏi những dữ liệu này, "
                        "lịch sự trả lời rằng chức năng chỉ dành cho chủ cửa hàng."),
     }
@@ -75,7 +75,7 @@ def reply(db: Session, client: GeminiClient, user: User, message: str, history: 
     message = clean_input(message)
     if not client.enabled:
         return {**fallback(db, user, message), "source": "fallback",
-                "warning": "Chưa cấu hình GEMINI_API_KEY - trợ lý đang chạy chế độ dự phòng, chỉ hiểu các câu hỏi cơ bản."}
+                "warning": f"{off_reason()} - trợ lý đang chạy chế độ dự phòng, chỉ hiểu các câu hỏi cơ bản."}
 
     system, user_text = render_prompt("assistant", message=message, **_prompt_vars(user))
     declarations = tools.declarations(tools.available(user))
@@ -160,11 +160,11 @@ def _help_text(user: User) -> str:
 def _invoice_answer(db: Session, user: User, code: str) -> dict:
     res = tools.run(db, user, "find_invoices", {"keyword": code})
     if not res.get("invoices"):
-        extra = " (nhân viên chỉ xem được hóa đơn do mình lập)" if user.role == "staff" else ""
+        extra = " (thu ngân chỉ xem được hóa đơn do mình lập)" if user.role != "owner" else ""
         return {"answer": f"Không tìm thấy hóa đơn **{code}**{extra}.", "tools": _used("find_invoices")}
     inv = res["invoices"][0]
     lines = [f"**Hóa đơn {inv['code']}** ({inv['status']})", f"- Thời gian: {inv['time']}",
-             f"- Khách hàng: {inv['customer']}", f"- Nhân viên: {inv['staff']}", "- Sản phẩm:",
+             f"- Khách hàng: {inv['customer']}", f"- Thu ngân: {inv['staff']}", "- Sản phẩm:",
              *[f"  - {x}" for x in inv["items"]]]
     if inv["discount"]:
         lines.append(f"- Giảm giá: {fmt_vnd(inv['discount'])}")

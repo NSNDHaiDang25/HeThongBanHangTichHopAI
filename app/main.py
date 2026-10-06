@@ -4,23 +4,30 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import engine, ensure_schema
-from app.routers import ai, auth, catalog, customers, invoices, payments, reports
+from app.routers import admin, aftersales, ai, auth, catalog, customers, invoices, payments, promotions, reports
+from app.services import system_config
 
 logging.basicConfig(level=logging.INFO)
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     ensure_schema(engine)
+    with Session(engine) as db:
+        system_config.load(db)  # tham số quản trị viên / chủ cửa hàng đã chỉnh trên giao diện
     yield
 
 
 app = FastAPI(
     title="Hệ thống quản lý bán hàng tích hợp AI",
-    version="1.0.0",
-    description="Quản lý sản phẩm, khách hàng, hóa đơn, nhập hàng, tồn kho, báo cáo và trợ lý AI (Gemini).",
+    version="2.0.0",
+    description="Quản lý sản phẩm, serial / IMEI, khách hàng thân thiết, khuyến mãi, hóa đơn, đổi trả, bảo hành, "
+                "nhập hàng, tồn kho, báo cáo và trợ lý AI (Gemini). Ba vai trò độc lập: quản trị viên, chủ cửa hàng, "
+                "thu ngân.",
     lifespan=lifespan,
 )
 
@@ -30,7 +37,7 @@ async def value_error_handler(_: Request, exc: ValueError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
-for r in (auth, catalog, customers, invoices, payments, reports, ai):
+for r in (auth, catalog, customers, invoices, payments, promotions, aftersales, reports, ai, admin):
     app.include_router(r.router)
 
 

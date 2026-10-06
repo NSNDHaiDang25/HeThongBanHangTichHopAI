@@ -6,9 +6,9 @@ def make_invoice(client, h, items, **extra):
     return client.post("/api/invoices", json={"items": items, **extra}, headers=h)
 
 
-def test_create_invoice_calculates_total_and_reduces_stock(client, staff_h):
+def test_create_invoice_calculates_total_and_reduces_stock(client, owner_h, staff_h):
     pk1, pk3 = product_id(client, staff_h, "PK001"), product_id(client, staff_h, "PK003")
-    r = make_invoice(client, staff_h, [{"product_id": pk1, "quantity": 2}, {"product_id": pk3, "quantity": 1}],
+    r = make_invoice(client, owner_h, [{"product_id": pk1, "quantity": 2}, {"product_id": pk3, "quantity": 1}],
                      discount=30_000, payment_method="transfer")
     assert r.status_code == 201, r.text
     inv = r.json()
@@ -21,18 +21,27 @@ def test_create_invoice_calculates_total_and_reduces_stock(client, staff_h):
     assert stock_of(client, staff_h, "PK003") == 49
 
 
-def test_discount_percent(client, staff_h):
-    pk1 = product_id(client, staff_h, "PK001")
-    r = make_invoice(client, staff_h, [{"product_id": pk1, "quantity": 2}], discount_percent=10)
+def test_discount_percent(client, owner_h):
+    pk1 = product_id(client, owner_h, "PK001")
+    r = make_invoice(client, owner_h, [{"product_id": pk1, "quantity": 2}], discount_percent=10)
     assert r.json()["discount"] == 70_000
     assert r.json()["total"] == 630_000
 
 
-def test_discount_greater_than_subtotal_rejected(client, staff_h):
-    pk3 = product_id(client, staff_h, "PK003")
-    r = make_invoice(client, staff_h, [{"product_id": pk3, "quantity": 1}], discount=500_000)
+def test_discount_greater_than_subtotal_rejected(client, owner_h):
+    pk3 = product_id(client, owner_h, "PK003")
+    r = make_invoice(client, owner_h, [{"product_id": pk3, "quantity": 1}], discount=500_000)
     assert r.status_code == 400
-    assert stock_of(client, staff_h, "PK003") == 50  # rollback, không trừ kho
+    assert stock_of(client, owner_h, "PK003") == 50  # rollback, không trừ kho
+
+
+def test_cashier_cannot_give_manual_discount(client, staff_h):
+    """Thu ngân chỉ áp dụng khuyến mãi / voucher do chủ cửa hàng tạo, không tự giảm giá."""
+    pk3 = product_id(client, staff_h, "PK003")
+    for extra in ({"discount": 10_000}, {"discount_percent": 5}):
+        r = make_invoice(client, staff_h, [{"product_id": pk3, "quantity": 1}], **extra)
+        assert r.status_code == 403
+    assert stock_of(client, staff_h, "PK003") == 50
 
 
 def test_insufficient_stock_rejected_and_nothing_changes(client, staff_h):

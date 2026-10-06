@@ -1,6 +1,6 @@
 # SalesAI: Hệ thống quản lý bán hàng tích hợp AI
 
-Web app quản lý bán hàng cho cửa hàng bán lẻ: sản phẩm, khách hàng, hóa đơn, nhập hàng, tồn kho, báo cáo doanh thu, kèm **4 chức năng AI (Google Gemini)**: trợ lý đa năng, chatbot tư vấn sản phẩm, AI sinh báo cáo doanh thu, hỏi đáp dữ liệu bán hàng.
+Web app quản lý bán hàng cho cửa hàng bán lẻ: sản phẩm (quản lý IMEI / serial), khách hàng thân thiết (hạng, điểm), khuyến mãi / voucher, hóa đơn, đổi trả, bảo hành, nhà cung cấp, nhập hàng, tồn kho, báo cáo doanh thu, kèm **4 chức năng AI (Google Gemini)**: trợ lý đa năng, chatbot tư vấn sản phẩm, AI sinh báo cáo doanh thu, hỏi đáp dữ liệu bán hàng.
 
 **Công nghệ:** Python 3.11+ · FastAPI · SQLAlchemy 2 · SQLite (đổi được sang PostgreSQL/MySQL) · HTML/CSS/JavaScript thuần · Chart.js · Gemini API · pytest
 
@@ -29,9 +29,11 @@ Mở **http://localhost:8000**. Camera quét QR chỉ hoạt động trên `loca
 
 | Tài khoản | Mật khẩu | Vai trò |
 |---|---|---|
-| `admin` | `admin123` | Quản trị viên: toàn quyền, quản lý người dùng |
-| `owner` | `owner123` | Chủ cửa hàng: quản lý, báo cáo, AI báo cáo/hỏi đáp |
-| `staff` | `staff123` | Nhân viên bán hàng: bán hàng, khách hàng, trợ lý AI, chatbot |
+| `admin` | `admin123` | **Quản trị viên**: quản lý tài khoản, đặt lại mật khẩu, cấu hình kỹ thuật và AI, sao lưu / khôi phục, nhật ký hệ thống. Không bán hàng, không xem giá vốn và doanh thu |
+| `owner` | `owner123` | **Chủ cửa hàng**: mọi nghiệp vụ của thu ngân + sản phẩm, serial / IMEI, giá, khuyến mãi, hạng thành viên, điểm, nhà cung cấp, nhập hàng, tồn kho, báo cáo, tham số kinh doanh, duyệt hủy hóa đơn, toàn bộ AI |
+| `staff` | `staff123` | **Thu ngân**: lập hóa đơn, khách hàng, đổi trả, bảo hành, phiếu nhập nháp, tra cứu sản phẩm, trợ lý AI và chatbot tư vấn |
+
+Ba vai trò **độc lập, không kế thừa quyền của nhau**: mỗi API khai báo đúng danh sách vai trò được dùng (`app/security.py`), giao diện chỉ hiện menu của vai trò đang đăng nhập.
 
 Màn hình đăng nhập có nút đăng nhập nhanh cho từng vai trò.
 
@@ -47,7 +49,14 @@ Lần chạy đầu container tự tạo dữ liệu mẫu. CSDL lưu trong `./d
 ## Chức năng
 
 **Quản lý**
-- Đăng nhập JWT, phân quyền 3 vai trò (kiểm tra ở server). Nhân viên không thấy giá nhập, chỉ xem hóa đơn mình lập và không được tự sửa giá bán.
+- Đăng nhập JWT, phân quyền 3 vai trò độc lập (kiểm tra ở server). Thu ngân không thấy giá nhập, chỉ xem hóa đơn mình lập, không tự sửa giá / tự giảm giá. Đổi mật khẩu, quên mật khẩu qua email.
+- **Quản trị hệ thống**: cấu hình kỹ thuật và AI trên giao diện (bật / tắt AI, model, timeout...), sao lưu / khôi phục dữ liệu, nhật ký hệ thống (đăng nhập, cấu hình, duyệt hủy, nhập kho...).
+- **Hóa đơn tạm** (lưu chưa thanh toán, sửa rồi thanh toán sau); hóa đơn đã thanh toán không sửa được: **thu ngân yêu cầu hủy, chủ cửa hàng duyệt**.
+- **Khuyến mãi, voucher** (%, số tiền, giảm tối đa, đơn tối thiểu, số lượt), **hạng thành viên** giảm giá tự động, **điểm tích lũy** (tích, dùng, điều chỉnh).
+- **IMEI / serial**: nhập kho ghi số máy, bán chọn đúng máy (quét IMEI thêm thẳng vào giỏ), tra bảo hành theo IMEI.
+- **Đổi trả trong 24 giờ** (hoàn tiền theo tỉ lệ giảm giá, nhập lại kho / hàng lỗi), **bảo hành** (tra cứu, tiếp nhận, cập nhật tiến độ), in phiếu.
+- **Nhà cung cấp**, **phiếu nhập nháp** (thu ngân lập, chủ cửa hàng xác nhận), **hủy phiếu nhập**, **thẻ kho**, **báo cáo tồn kho**.
+- Hóa đơn in từ trình duyệt (khổ 80mm, có mã QR để tra khi đổi trả / bảo hành), **xuất PDF**, **gửi email** kèm PDF.
 - Sản phẩm: mã, tên, **ảnh**, nhóm hàng, giá bán, giá nhập, tồn kho, mức tồn tối thiểu, mô tả, trạng thái. Lọc theo còn / sắp hết / hết hàng. Ảnh tải lên được thu nhỏ về 800px, lưu dạng WEBP trong `data/uploads/`. 26 sản phẩm mẫu có sẵn ảnh chụp thật trong `static/img/products/` (nguồn Pexels, giấy phép miễn phí, xem `NGUON_ANH.md`).
 - Khách hàng: liên hệ, nhóm (thường / VIP / sỉ), lịch sử mua, tổng chi tiêu.
 - Bán hàng (POS): giỏ hàng có ảnh, giảm giá theo ₫ hoặc %, in hóa đơn.
@@ -62,7 +71,7 @@ Lần chạy đầu container tự tạo dữ liệu mẫu. CSDL lưu trong `./d
 
 | Chức năng | Prompt | Điểm chính |
 |---|---|---|
-| **Trợ lý đa năng** | `prompts/assistant.md` | Một khung chat hỏi được mọi thứ: sản phẩm, tồn kho, hóa đơn, khách hàng, doanh thu, xu hướng, nhập hàng, cách dùng phần mềm (`prompts/app_guide.md`), kiến thức chung. Gemini **function calling**: AI tự chọn trong 13 công cụ chỉ-đọc (`app/ai/tools.py`), không sinh SQL; công cụ lọc theo vai trò |
+| **Trợ lý đa năng** | `prompts/assistant.md` | Một khung chat hỏi được mọi thứ: sản phẩm, tồn kho, hóa đơn, khách hàng, doanh thu, xu hướng, nhập hàng, cách dùng phần mềm (`prompts/app_guide.md`), kiến thức chung. Gemini **function calling**: AI tự chọn trong 14 công cụ chỉ-đọc (`app/ai/tools.py`), không sinh SQL; công cụ lọc theo vai trò |
 | Chatbot tư vấn sản phẩm | `prompts/product_advisor_v3.md` | Chỉ gửi sản phẩm còn hàng; trả JSON; server hậu kiểm loại mã sai hoặc hết hàng; có nút "Thêm vào giỏ" |
 | AI sinh báo cáo doanh thu | `prompts/sales_report.md` | Hệ thống tính số liệu, AI viết nhận xét và khuyến nghị nhập hàng dạng Markdown |
 | Hỏi đáp dữ liệu bán hàng | `prompts/sales_qa.md` | Tự nhận diện kỳ ("tháng này", "tháng trước", "7 ngày"...), không cho AI chạy SQL |
@@ -75,7 +84,7 @@ Xử lý lỗi AI gồm: timeout, retry có backoff khi gặp 429/5xx, xử lý 
 pytest -q
 ```
 
-128 test gồm hóa đơn (`test_invoices.py`), tồn kho (`test_inventory.py`), báo cáo và xuất file (`test_reports.py`), AI (`test_ai.py`), trợ lý đa năng và công cụ tra cứu (`test_assistant.py`), lịch sử trò chuyện (`test_chat_history.py`), thanh toán, VietQR, quét mã và ảnh sản phẩm (`test_payments_images.py`). Test AI dùng client giả nên không cần mạng hay API key.
+243 test gồm phân quyền, sao lưu / khôi phục, cấu hình (`test_roles.py`), khuyến mãi, voucher, hạng, điểm, IMEI, đổi trả, bảo hành, phiếu nhập nháp, thẻ kho (`test_sales_features.py`), hóa đơn (`test_invoices.py`), tồn kho (`test_inventory.py`), báo cáo và xuất file (`test_reports.py`), AI (`test_ai.py`), trợ lý đa năng và công cụ tra cứu (`test_assistant.py`), lịch sử trò chuyện (`test_chat_history.py`), thanh toán, VietQR, quét mã và ảnh sản phẩm (`test_payments_images.py`). Test AI dùng client giả nên không cần mạng hay API key.
 
 So sánh 3 phiên bản prompt với Gemini thật (cần API key):
 
@@ -89,12 +98,14 @@ python -m scripts.compare_prompts --runs 3
 app/
   main.py              Khởi tạo FastAPI, phục vụ giao diện
   config.py            Đọc cấu hình từ .env
-  models.py            9 bảng: users, categories, products, customers, invoices,
-                       invoice_items, import_receipts, import_items, stock_movements
+  models.py            Bảng nghiệp vụ (sản phẩm, serial, khách hàng, hạng, điểm, khuyến mãi, hóa đơn, đổi trả,
+                       bảo hành, nhà cung cấp, phiếu nhập, thẻ kho) và hệ thống (người dùng, nhật ký, tham số)
   schemas.py           Kiểm tra dữ liệu vào
-  security.py          Băm mật khẩu, JWT, phân quyền
-  routers/             API: auth, catalog, customers, invoices, payments, reports, ai
-  services/            inventory.py (hóa đơn, nhập hàng, tồn kho), reports.py, export.py, qr.py (VietQR, tem QR)
+  security.py          Băm mật khẩu, JWT, phân quyền 3 vai trò độc lập
+  routers/             API: auth, catalog, customers, invoices, payments, promotions (khuyến mãi, nhà cung cấp),
+                       aftersales (đổi trả, bảo hành), reports, ai, admin (cấu hình, sao lưu, nhật ký, tham số kinh doanh)
+  services/            inventory.py (hóa đơn, nhập hàng, tồn kho, serial), loyalty.py (hạng, điểm), aftersales.py,
+                       reports.py, export.py, qr.py, audit.py (nhật ký), system_config.py (tham số), backup.py
   ai/                  client.py (Gemini, function calling), prompts.py (nạp template), service.py (tư vấn, báo cáo, hỏi đáp),
                        assistant.py (trợ lý đa năng), tools.py (công cụ tra cứu chỉ-đọc), history.py (lịch sử chat)
 prompts/               Prompt template (tách khỏi code)
@@ -126,11 +137,11 @@ VIETQR_ACCOUNT_NAME=CUA HANG SALESAI
 
 Mã QR được sinh ngay trên máy chủ theo chuẩn EMVCo/NAPAS, không gọi dịch vụ bên ngoài. Hệ thống **không tự xác nhận** tiền đã về tài khoản: thu ngân kiểm tra app ngân hàng rồi bấm "Đã nhận tiền".
 
-Khi nâng cấp từ bản cũ, không cần xóa dữ liệu: lúc khởi động, hệ thống tự thêm các cột mới (`image_url`, `cash_received`, `payment_ref`).
+Khi nâng cấp từ bản cũ, không cần xóa dữ liệu: lúc khởi động, hệ thống tự tạo bảng mới và thêm các cột mới. Tài khoản nhận tiền cũng chỉnh được trên giao diện (chủ cửa hàng, menu **Tham số kinh doanh**).
 
-## Quản trị viên quên mật khẩu (mã qua email)
+## Quên mật khẩu (mã qua email)
 
-Ở màn hình đăng nhập, bấm **Quên mật khẩu?**, nhập tên đăng nhập quản trị viên: hệ thống gửi mã 6 số tới `ADMIN_EMAIL` (hiệu lực 10 phút, dùng một lần, sai 5 lần thì hủy, 60 giây mới gửi lại được). Chủ cửa hàng và nhân viên vẫn nhờ quản trị viên đặt lại trong menu **Người dùng**.
+Ở màn hình đăng nhập, bấm **Quên mật khẩu?**, nhập tên đăng nhập: hệ thống gửi mã 6 số tới **email của tài khoản** (quản trị viên khai báo email cho từng người trong menu **Người dùng**; tài khoản quản trị viên chưa có email thì gửi tới `ADMIN_EMAIL`). Mã hiệu lực 10 phút, dùng một lần, sai 5 lần thì hủy, 60 giây mới gửi lại được. Tài khoản chưa có email nhờ quản trị viên đặt lại. Đang đăng nhập thì bấm vào tên ở góc trên bên phải để **đổi mật khẩu**. Cấu hình gửi email cũng dùng để gửi hóa đơn cho khách.
 
 Điền `ADMIN_EMAIL` trong `.env` và chọn một cách gửi email:
 

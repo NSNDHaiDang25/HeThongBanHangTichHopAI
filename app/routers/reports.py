@@ -12,7 +12,7 @@ from app.security import MANAGERS
 from app.services import export, reports
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
-STATUS_VI = {"paid": "Đã thanh toán", "cancelled": "Đã hủy"}
+STATUS_VI = {"paid": "Đã thanh toán", "cancelled": "Đã hủy", "pending": "Chưa thanh toán"}
 PAY_VI = {"cash": "Tiền mặt", "transfer": "Chuyển khoản", "card": "Quẹt thẻ", "qr": "Quét mã QR"}
 
 
@@ -63,6 +63,22 @@ def low_stock(db: Session = Depends(get_db), _: User = Depends(MANAGERS)):
     return _with_images(db, reports.low_stock(db))
 
 
+@router.get("/inventory")
+def inventory(category_id: int | None = None, stock: str | None = Query(None, pattern="^(ok|low|out)$"),
+              db: Session = Depends(get_db), _: User = Depends(MANAGERS)):
+    return reports.inventory_report(db, category_id, stock)
+
+
+@router.get("/stock-card")
+def stock_card(product_id: int, date_from: str | None = None, date_to: str | None = None,
+               db: Session = Depends(get_db), _: User = Depends(MANAGERS)):
+    p = db.get(Product, product_id)
+    if p is None:
+        raise HTTPException(404, "Không tìm thấy sản phẩm")
+    start, end = _range(date_from, date_to)
+    return reports.stock_card(db, p, start, end)
+
+
 def _file(content: bytes, fmt: str, name: str) -> Response:
     return Response(content, media_type=export.MEDIA[fmt],
                     headers={"Content-Disposition": f'attachment; filename="{name}.{fmt}"'})
@@ -86,7 +102,8 @@ def export_revenue(format: str = Query("xlsx", pattern="^(csv|xlsx|pdf)$"),
     if format == "csv":
         return _file(export.to_csv(["Ngày", "Số hóa đơn", "Doanh thu"], day_rows), "csv", name)
     if format == "xlsx":
-        summary_rows = [["Kỳ báo cáo", period], ["Số hóa đơn", s["invoice_count"]], ["Doanh thu", s["revenue"]],
+        summary_rows = [["Kỳ báo cáo", period], ["Số hóa đơn", s["invoice_count"]], ["Tiền bán hàng", s["gross_sales"]],
+                        ["Hoàn tiền trả hàng", s["refunds"]], ["Doanh thu thuần", s["revenue"]],
                         ["Giảm giá", s["discount"]], ["Giá vốn", s["cost"]], ["Lãi gộp", s["gross_profit"]]]
         return _file(export.to_xlsx([
             ("Tổng quan", ["Chỉ tiêu", "Giá trị"], summary_rows),
@@ -99,7 +116,8 @@ def export_revenue(format: str = Query("xlsx", pattern="^(csv|xlsx|pdf)$"),
         "BÁO CÁO DOANH THU", f"Kỳ: {period}",
         [
             ("Tổng quan", ["Chỉ tiêu", "Giá trị"], [
-                ["Số hóa đơn", s["invoice_count"]], ["Doanh thu", v(s["revenue"])],
+                ["Số hóa đơn", s["invoice_count"]], ["Tiền bán hàng", v(s["gross_sales"])],
+                ["Hoàn tiền trả hàng", v(s["refunds"])], ["Doanh thu thuần", v(s["revenue"])],
                 ["Giá vốn", v(s["cost"])], ["Lãi gộp", v(s["gross_profit"])]], [1, 1]),
             ("Doanh thu theo nhóm hàng", ["Nhóm hàng", "Số lượng", "Doanh thu"],
              [[r[0], r[1], v(r[2])] for r in cat_rows], [3, 1, 2]),
@@ -138,3 +156,35 @@ def export_invoices(format: str = Query("xlsx", pattern="^(csv|xlsx|pdf)$"),
         [("Chi tiết", ["Mã HĐ", "Thời gian", "Khách hàng", "Tổng tiền", "Thanh toán", "Trạng thái"],
           pdf_rows, [1.6, 1.6, 2.2, 1.3, 1.3, 1.3])],
     ), "pdf", name)
+
+
+@router.get("/export/inventory")
+def export_inventory(format: str = Query("xlsx", pattern="^(csv|xlsx|pdf)$"), category_id: int | None = None,
+                     stock: str | None = Query(None, pattern="^(ok|low|out)$"),
+                     db: Session = Depends(get_db), _: User = Depends(MANAGERS)):
+    r = reports.inventory_report(db, category_id, stock)
+    s = r["summary"]
+    state = {"ok": "Còn hàng", "low": "Sắp hết", "out": "Hết hàng"}
+    headers = ["Mã", "Sản phẩm", "Nhóm hàng", "Tồn", "Tối thiểu", "Giá vốn", "Giá bán", "Giá trị tồn (vốn)", "Tình trạng"]
+    rows = [[i["code"], i["name"], i["category_name"] or "", i["stock"], i["min_stock"], i["cost_price"],
+             i["sale_price"], i["value_at_cost"], state[i["state"]]] for i in r["items"]]
+    name = f"bao_cao_ton_kho_{now():%Y%m%d}"
+    if format == "csv":
+        return _file(export.to_csv(headers, rows), "csv", name)
+    cat_rows = [[c["category"], c["products"], c["units"], c["value_at_cost"], c["value_at_price"]] for c in r["by_category"]]
+    if format == "xlsx":
+        return _file(export.to_xlsx([
+            ("Tổng quan", ["Chỉ tiêu", "Giá trị"], [["Số sản phẩm đang bán", s["products"]], ["Tổng số lượng tồn", s["units"]],
+                                                   ["Giá trị tồn theo giá vốn", s["value_at_cost"]],
+                                                   ["Giá trị tồn theo giá bán", s["value_at_price"]],
+                                                   ["Sắp hết hàng", s["low"]], ["Hết hàng", s["out"]]]),
+            ("Theo nhóm hàng", ["Nhóm hàng", "Số SP", "Số lượng", "Giá trị vốn", "Giá trị bán"], cat_rows),
+            ("Chi tiết", headers, rows),
+        ]), "xlsx", name)
+    v = export.vnd
+    return _file(export.to_pdf("BÁO CÁO TỒN KHO", f"Ngày {now():%d/%m/%Y} - giá trị tồn {v(s['value_at_cost'])} đ (giá vốn)", [
+        ("Theo nhóm hàng", ["Nhóm hàng", "Số SP", "SL tồn", "Giá trị vốn"],
+         [[c[0], c[1], c[2], v(c[3])] for c in cat_rows], [3, 1, 1, 2]),
+        ("Chi tiết", ["Mã", "Sản phẩm", "Tồn", "Giá vốn", "Giá trị tồn", "Tình trạng"],
+         [[x[0], x[1], x[3], v(x[5]), v(x[7]), x[8]] for x in rows], [1.2, 4, 0.8, 1.5, 1.8, 1.3]),
+    ]), "pdf", name)

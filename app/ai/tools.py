@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.ai.service import fmt_vnd, mask_phone, strip_accents
 from app.config import settings
-from app.models import (Category, Customer, ImportItem, ImportReceipt, Invoice, InvoiceItem, Product,
+from app.models import (Category, Customer, ImportItem, ImportReceipt, Invoice, InvoiceItem, Product, Promotion,
                         StockMovement, User, now)
 from app.routers.invoices import invoice_query
 from app.services import reports
@@ -30,7 +30,7 @@ logger = logging.getLogger("ai")
 PAY_VI = {"cash": "Tiền mặt", "transfer": "Chuyển khoản", "card": "Quẹt thẻ", "qr": "Quét mã QR"}
 GROUP_VI = {"regular": "Thường", "vip": "VIP", "wholesale": "Khách sỉ"}
 MOVE_VI = {"import": "Nhập hàng", "sale": "Bán hàng", "cancel": "Hủy hóa đơn", "edit": "Sửa hóa đơn",
-           "adjust": "Kiểm kho"}
+           "adjust": "Kiểm kho", "return": "Khách trả hàng", "import_cancel": "Hủy phiếu nhập"}
 WEEKDAYS_VI = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
 _STOP = {"toi", "can", "mua", "cho", "mot", "cai", "co", "khong", "duoi", "tren", "gia", "khach", "hang",
          "con", "va", "la", "nao", "loai", "muon", "tim", "san", "pham", "the", "nhu", "bao", "nhieu",
@@ -64,7 +64,7 @@ def tool(name: str, label: str, description: str, params: dict | None = None,
 
 
 def is_manager(user: User) -> bool:
-    return user.role in ("admin", "owner")
+    return user.role == "owner"
 
 
 def available(user: User) -> list[Tool]:
@@ -199,7 +199,7 @@ DATE_FROM = {"type": "STRING", "description": "Ngày bắt đầu, định dạn
 DATE_TO = {"type": "STRING", "description": "Ngày kết thúc (tính cả ngày này), YYYY-MM-DD. Bỏ trống = hôm nay."}
 
 
-# ================================================================ Công cụ cho mọi nhân viên
+# ================================================================ Công cụ cho thu ngân và chủ cửa hàng
 @tool("search_products", "Tìm sản phẩm",
       "Tìm sản phẩm đang kinh doanh theo từ khóa, nhóm hàng, khoảng giá. Dùng để tư vấn khách, kiểm tra giá, "
       "còn hàng hay không. Từ khóa nên ngắn (VD: 'tai nghe', 'sạc', 'loa'); để trống keyword để duyệt theo "
@@ -295,6 +295,22 @@ def list_categories(db: Session, user: User, a: dict) -> dict:
     return {"categories": list(stats.values())}
 
 
+@tool("list_promotions", "Khuyến mãi",
+      "Các chương trình khuyến mãi / voucher đang chạy hôm nay: mức giảm, đơn tối thiểu, thời hạn. "
+      "Mã voucher không được tiết lộ cho thu ngân (khách phải tự đưa mã).")
+def list_promotions(db: Session, user: User, a: dict) -> dict:
+    today = now().date()
+    rows = db.scalars(select(Promotion).where(Promotion.is_active.is_(True), Promotion.start_date <= today,
+                                              Promotion.end_date >= today).order_by(Promotion.end_date))
+    out = []
+    for p in rows:
+        value = f"{p.value}%" + (f" (tối đa {fmt_vnd(p.max_discount)})" if p.max_discount else "")             if p.discount_type == "percent" else fmt_vnd(p.value)
+        out.append({"name": p.name, "discount": value, "min_order": p.min_subtotal, "until": p.end_date.isoformat(),
+                    "type": "voucher (khách nhập mã)" if p.code else "chọn khi bán",
+                    **({"code": p.code} if p.code and is_manager(user) else {})})
+    return {"today": today.isoformat(), "promotions": out}
+
+
 @tool("find_invoices", "Tra hóa đơn",
       "Tìm hóa đơn theo mã (VD: HD2605200001), tên / mã khách hàng, khoảng ngày, trạng thái, phương thức thanh toán. "
       "Trả về tổng số hóa đơn khớp, tổng tiền đã thanh toán và danh sách chi tiết. "
@@ -303,13 +319,14 @@ def list_categories(db: Session, user: User, a: dict) -> dict:
           "keyword": {"type": "STRING", "description": "Mã hóa đơn, tên hoặc mã khách hàng"},
           "date_from": {"type": "STRING", "description": "Từ ngày YYYY-MM-DD (bỏ trống = không giới hạn)"},
           "date_to": {"type": "STRING", "description": "Đến ngày YYYY-MM-DD (bỏ trống = không giới hạn)"},
-          "status": {"type": "STRING", "enum": ["paid", "cancelled"], "description": "paid = đã thanh toán, cancelled = đã hủy"},
+          "status": {"type": "STRING", "enum": ["pending", "paid", "cancelled"],
+                     "description": "pending = hóa đơn tạm chưa thanh toán, paid = đã thanh toán, cancelled = đã hủy"},
           "payment_method": {"type": "STRING", "enum": list(PAY_VI), "description": "Phương thức thanh toán"},
           "order": {"type": "STRING", "enum": ["newest", "largest"], "description": "Mới nhất hoặc giá trị lớn nhất"},
           "limit": {"type": "INTEGER", "description": "Số hóa đơn trả về (1-10), mặc định 5"},
       })
 def find_invoices(db: Session, user: User, a: dict) -> dict:
-    status = _enum(a, "status", ("paid", "cancelled"), "") or None
+    status = _enum(a, "status", ("pending", "paid", "cancelled"), "") or None
     method = _enum(a, "payment_method", tuple(PAY_VI), "") or None
     order = _enum(a, "order", ("newest", "largest"), "newest")
     limit = _int(a, "limit", 5, 1, 10)
@@ -325,14 +342,14 @@ def find_invoices(db: Session, user: User, a: dict) -> dict:
                       .order_by(*sort).limit(limit)).unique().all()
     return {
         "matched_count": count, "paid_total": int(sum_paid),
-        "scope": "chỉ hóa đơn do bạn lập" if user.role == "staff" else "toàn cửa hàng",
+        "scope": "chỉ hóa đơn do bạn lập" if user.role != "owner" else "toàn cửa hàng",
         "invoices": [{
             "code": inv.code, "time": inv.created_at.strftime("%Y-%m-%d %H:%M"),
             "customer": inv.customer.name if inv.customer else "Khách lẻ",
             "customer_code": inv.customer.code if inv.customer else None,
             "staff": inv.user.full_name, "subtotal": inv.subtotal, "discount": inv.discount, "total": inv.total,
             "payment_method": PAY_VI.get(inv.payment_method, inv.payment_method),
-            "status": "đã thanh toán" if inv.status == "paid" else "đã hủy",
+            "status": {"paid": "đã thanh toán", "pending": "chưa thanh toán (hóa đơn tạm)"}.get(inv.status, "đã hủy"),
             "cancel_reason": inv.cancel_reason,
             "items": [f"{it.product.name} ({it.product.code}) x{it.quantity} = {fmt_vnd(it.line_total)}" for it in inv.items],
         } for inv in rows],

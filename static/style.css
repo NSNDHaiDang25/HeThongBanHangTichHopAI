@@ -769,6 +769,32 @@ tr.clickable:hover td { background: var(--hover); }
   .label-card { border-color: #999; }
 }
 
+/* ---------- Phân vai trò, hậu mãi, serial / IMEI ---------- */
+.user-chip { cursor: pointer; border-radius: var(--radius-sm); }
+.user-chip:hover .name { color: var(--primary); }
+.row.end { align-items: flex-end; }
+.mono { font-family: ui-monospace, Consolas, monospace; }
+.serial-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-1); }
+.serial-chip { font-family: ui-monospace, Consolas, monospace; font-size: var(--fs-xs); padding: 1px var(--space-2); border-radius: var(--radius-pill); background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
+.serial-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: var(--space-2); max-height: 320px; overflow: auto; }
+.serial-list label { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: ui-monospace, Consolas, monospace; font-size: var(--fs-sm); cursor: pointer; }
+.serial-list label:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); }
+.serial-list.compact { grid-template-columns: 1fr; max-height: 160px; }
+.serial-list.compact label { padding: var(--space-1) var(--space-2); }
+.im-serial { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
+.im-serial textarea { font-family: ui-monospace, Consolas, monospace; font-size: var(--fs-sm); }
+.tile-img .badge.blue { left: auto; right: 8px; }
+.tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border); margin-bottom: var(--space-4); }
+.tabs a { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); color: var(--text-2); text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 500; }
+.tabs a.active { color: var(--primary); border-bottom-color: var(--primary); }
+.tabs a .i { width: 16px; height: 16px; }
+.timeline { list-style: none; padding: 0; margin: 0; }
+.timeline li { position: relative; padding: 0 0 var(--space-3) var(--space-5); border-left: 2px solid var(--border); margin-left: var(--space-2); }
+.timeline li::before { content: ""; position: absolute; left: -7px; top: 4px; width: 12px; height: 12px; border-radius: 50%; background: var(--primary); border: 2px solid var(--surface); }
+.timeline li:last-child { border-left-color: transparent; }
+.receipt-qr { text-align: center; margin-top: var(--space-3); }
+.receipt-qr svg { width: 96px; height: 96px; display: block; margin: 0 auto; background: var(--qr-bg); }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1180px) { .pos { grid-template-columns: 1fr; } .cart { position: static; } .product-grid { max-height: none; } }
 @media (max-width: 960px) {

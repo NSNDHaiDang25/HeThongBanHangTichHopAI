@@ -102,7 +102,7 @@ def test_staff_cannot_use_manager_tools(client, staff_h, owner_h, fake_ai):
     assert "sales_summary" not in declared and "search_products" in declared
     res = tool_results(fake_ai.calls[1])["sales_summary"]
     assert "error" in res and "700000" not in json.dumps(res)
-    assert "Nhân viên bán hàng" in fake_ai.calls[0]["system"]
+    assert "Thu ngân" in fake_ai.calls[0]["system"]
 
 
 def test_find_invoices_respects_staff_scope(client, owner_h, staff_h, db):

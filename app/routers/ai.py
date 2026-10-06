@@ -8,13 +8,13 @@ from app.config import settings
 from app.database import get_db
 from app.models import ChatSession, User
 from app.schemas import AIReportIn, ChatIn, QuestionIn, SessionRename
-from app.security import ALL_STAFF, MANAGERS
+from app.security import ALL_STAFF, ANY_ROLE, MANAGERS
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 
 @router.get("/status")
-def ai_status(client: GeminiClient = Depends(get_ai_client), _: User = Depends(ALL_STAFF)):
+def ai_status(client: GeminiClient = Depends(get_ai_client), _: User = Depends(ANY_ROLE)):
     """model = model đang dùng được (None nếu mọi model đều đang hết lượt); models = tình trạng từng model."""
     info = client.status() if client.enabled else {"active_model": None, "models": []}
     return {"enabled": client.enabled, "model": info["active_model"], "models": info["models"],
@@ -74,7 +74,7 @@ def ask(data: QuestionIn, db: Session = Depends(get_db), client: GeminiClient = 
 def _check_kind(kind: str, user: User) -> None:
     if kind not in history.KINDS:
         raise HTTPException(400, "Loại lịch sử không hợp lệ")
-    if kind == "ask" and user.role == "staff":
+    if kind == "ask" and user.role != "owner":
         raise HTTPException(403, "Bạn không có quyền thực hiện chức năng này")
 
 

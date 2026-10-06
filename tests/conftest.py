@@ -5,8 +5,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app import main as main_module
 from app import security
 from app.ai.client import AIResult, ChatReply, get_ai_client
+from app.config import settings
 from app.database import Base, get_db, make_engine
 from app.main import app
 from app.models import Category, Customer, Product, User
@@ -55,6 +57,15 @@ class FakeAI:
                          model=self.model, latency_ms=5)
 
 
+@pytest.fixture(autouse=True)
+def restore_settings():
+    """Tham số đổi qua API (cấu hình kỹ thuật, tham số kinh doanh) không lan sang test khác."""
+    saved = dict(vars(settings))
+    yield
+    vars(settings).clear()
+    vars(settings).update(saved)
+
+
 @pytest.fixture
 def engine():
     eng = make_engine("sqlite://", poolclass=StaticPool)
@@ -93,8 +104,9 @@ def fake_ai():
 
 
 @pytest.fixture
-def client(engine, db, fake_ai):
+def client(engine, db, fake_ai, monkeypatch):
     Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    monkeypatch.setattr(main_module, "engine", engine)  # lúc khởi động: tạo bảng / nạp tham số trên CSDL test
 
     def override_db():
         s = Session()

@@ -32,9 +32,20 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 # Cột được thêm sau phiên bản đầu. create_all() không sửa bảng đã có nên bổ sung bằng ALTER TABLE,
 # giúp CSDL cũ vẫn chạy mà không phải xóa dữ liệu.
 ADDED_COLUMNS = {
-    "users": {"pending": "BOOLEAN NOT NULL DEFAULT FALSE"},
-    "products": {"image_url": "VARCHAR(255)"},
-    "invoices": {"cash_received": "INTEGER", "payment_ref": "VARCHAR(50)"},
+    "users": {"pending": "BOOLEAN NOT NULL DEFAULT FALSE", "email": "VARCHAR(100)"},
+    "products": {"image_url": "VARCHAR(255)", "warranty_months": "INTEGER NOT NULL DEFAULT 0",
+                 "track_serial": "BOOLEAN NOT NULL DEFAULT FALSE"},
+    "customers": {"points": "INTEGER NOT NULL DEFAULT 0"},
+    "invoices": {"cash_received": "INTEGER", "payment_ref": "VARCHAR(50)", "promotion_id": "INTEGER",
+                 "cancel_requested_at": "TIMESTAMP", "cancel_requested_by": "INTEGER",
+                 "tier_discount": "INTEGER NOT NULL DEFAULT 0", "promo_discount": "INTEGER NOT NULL DEFAULT 0",
+                 "points_used": "INTEGER NOT NULL DEFAULT 0", "points_discount": "INTEGER NOT NULL DEFAULT 0",
+                 "points_earned": "INTEGER NOT NULL DEFAULT 0"},
+    "invoice_items": {"serials": "JSON"},
+    "import_receipts": {"supplier_id": "INTEGER", "status": "VARCHAR(20) NOT NULL DEFAULT 'completed'",
+                        "confirmed_at": "TIMESTAMP", "confirmed_by": "INTEGER", "cancelled_at": "TIMESTAMP",
+                        "cancel_reason": "VARCHAR(255)"},
+    "import_items": {"serials": "JSON"},
 }
 
 

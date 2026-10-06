@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from app.ai.client import AIError, GeminiClient
+from app.ai.client import AIError, GeminiClient, off_reason
 from app.ai.prompts import render_prompt
 from app.models import Product, now
 from app.services import reports
@@ -153,7 +153,7 @@ def advise(db: Session, client: GeminiClient, message: str, history: list[dict] 
 
     if not client.enabled:
         return {**_fallback_advise(products, message), "source": "fallback", "version": version,
-                "warning": "Chưa cấu hình GEMINI_API_KEY - đang dùng tư vấn dự phòng theo từ khóa."}
+                "warning": f"{off_reason()} - đang dùng tư vấn dự phòng theo từ khóa."}
 
     system, user = render_prompt(
         f"product_advisor_{version}", message=message, product_table=product_table(sent),
@@ -246,7 +246,7 @@ def sales_report(db: Session, client: GeminiClient, date_from: str | None, date_
                 "source": "fallback", "warning": None}
     if not client.enabled:
         return {**base, "markdown": _fallback_report(ctx), "source": "fallback",
-                "warning": "Chưa cấu hình GEMINI_API_KEY - đang dùng báo cáo mẫu."}
+                "warning": f"{off_reason()} - đang dùng báo cáo mẫu."}
     system, user = render_prompt(
         "sales_report", date_from=ctx["period"]["from"], date_to=ctx["period"]["to"],
         data_json=json.dumps(ctx, ensure_ascii=False, indent=1),
@@ -322,7 +322,7 @@ def ask_data(db: Session, client: GeminiClient, question: str) -> dict:
     base = {"period": ctx["period"], "period_label": label}
     if not client.enabled:
         return {**base, "answer": _fallback_answer(question, ctx, label), "source": "fallback",
-                "warning": "Chưa cấu hình GEMINI_API_KEY - đang trả lời theo mẫu."}
+                "warning": f"{off_reason()} - đang trả lời theo mẫu."}
     system, user = render_prompt(
         "sales_qa", question=question, date_from=ctx["period"]["from"], date_to=ctx["period"]["to"],
         data_json=json.dumps(ctx, ensure_ascii=False, indent=1),

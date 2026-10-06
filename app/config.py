@@ -14,6 +14,8 @@ class Settings:
 
     # Bỏ cả dấu ngoặc kép / đơn: dán key kèm ngoặc vào Environment trên Render là lỗi hay gặp (Google trả 401)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip().strip("\"'").strip()
+    # Quản trị viên tắt AI (trên màn hình Cấu hình hệ thống): mọi chức năng AI chạy chế độ dự phòng
+    AI_ENABLED: bool = os.getenv("AI_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
     # Model dự phòng, dùng lần lượt khi model chính hết lượt / quá tải (mỗi model có hạn mức riêng).
     # Xếp model mạnh trước để câu trả lời vẫn tốt khi phải đổi model; bản lite để cuối cùng.
@@ -27,7 +29,14 @@ class Settings:
     AI_MAX_RETRIES: int = int(os.getenv("AI_MAX_RETRIES", "2"))
     ADVISOR_PROMPT_VERSION: str = os.getenv("ADVISOR_PROMPT_VERSION", "v3")
 
+    # ---- Tham số kinh doanh (chủ cửa hàng chỉnh trên màn hình Tham số kinh doanh, ghi đè giá trị ở đây)
     SHOP_NAME: str = os.getenv("SHOP_NAME", "Cửa hàng SalesAI")
+    SHOP_ADDRESS: str = os.getenv("SHOP_ADDRESS", "")
+    SHOP_PHONE: str = os.getenv("SHOP_PHONE", "")
+    POINTS_EARN_AMOUNT: int = int(os.getenv("POINTS_EARN_AMOUNT", "100000"))  # mỗi 100.000 ₫ thanh toán = 1 điểm
+    POINT_VALUE: int = int(os.getenv("POINT_VALUE", "1000"))                  # 1 điểm = 1.000 ₫ khi dùng điểm
+    POINTS_MAX_PERCENT: int = int(os.getenv("POINTS_MAX_PERCENT", "50"))       # dùng điểm tối đa 50% giá trị đơn
+    RETURN_HOURS: int = int(os.getenv("RETURN_HOURS", "24"))                   # nhận đổi trả trong 24 giờ sau khi mua
     # Tài khoản nhận chuyển khoản (VietQR). BIN ngân hàng: https://api.vietqr.io/v2/banks
     VIETQR_BANK_BIN: str = os.getenv("VIETQR_BANK_BIN", "970436")
     VIETQR_BANK_NAME: str = os.getenv("VIETQR_BANK_NAME", "Vietcombank")

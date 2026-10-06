@@ -1,4 +1,4 @@
-"""Test quên mật khẩu: quản trị viên nhận mã qua email (gửi mail giả) rồi đặt mật khẩu mới."""
+"""Test quên mật khẩu: nhận mã qua email (gửi mail giả) rồi đặt mật khẩu mới; đổi mật khẩu khi đã đăng nhập."""
 import re
 from datetime import datetime, timedelta
 
@@ -38,7 +38,7 @@ def can_login(client, username, password):
 def test_admin_resets_password_with_emailed_code(client, outbox):
     r = forgot(client)
     assert r.status_code == 200, r.text
-    assert "b***@example.com" in r.json()["message"]
+    assert "boss@example.com" not in r.json()["message"]  # không lộ email / tài khoản nào tồn tại
     assert len(outbox) == 1 and outbox[0]["to"] == "boss@example.com"
     code = code_of(outbox[0])
     assert code in outbox[0]["subject"]
@@ -49,7 +49,7 @@ def test_admin_resets_password_with_emailed_code(client, outbox):
     assert reset(client, code, "khac123456").status_code == 400  # mã chỉ dùng một lần
 
 
-def test_non_admin_gets_same_message_but_no_email(client, outbox):
+def test_account_without_email_gets_same_message_but_no_email(client, outbox):
     admin_msg = forgot(client).json()["message"]
     for username in ("owner", "khong-ton-tai"):
         r = forgot(client, username)
@@ -58,6 +58,25 @@ def test_non_admin_gets_same_message_but_no_email(client, outbox):
     assert len(outbox) == 1
     assert reset(client, "000000", username="owner").status_code == 400
     assert can_login(client, "owner", "owner123")
+
+
+def test_any_role_with_email_can_reset(client, outbox, admin_h):
+    owner_id = next(u["id"] for u in client.get("/api/users", headers=admin_h).json() if u["username"] == "owner")
+    assert client.put(f"/api/users/{owner_id}", json={"email": "chu@example.com"}, headers=admin_h).status_code == 200
+    assert forgot(client, "owner").status_code == 200
+    assert outbox[-1]["to"] == "chu@example.com"
+    assert reset(client, code_of(outbox[-1]), "chumoi123", username="owner").status_code == 200
+    assert can_login(client, "owner", "chumoi123")
+
+
+def test_change_own_password(client, staff_h):
+    r = client.post("/api/auth/change-password", json={"current_password": "sai", "new_password": "staff456"},
+                    headers=staff_h)
+    assert r.status_code == 400
+    r = client.post("/api/auth/change-password", json={"current_password": "staff123", "new_password": "staff456"},
+                    headers=staff_h)
+    assert r.status_code == 200
+    assert can_login(client, "staff", "staff456") and not can_login(client, "staff", "staff123")
 
 
 def test_wrong_code_is_limited(client, outbox):

@@ -88,7 +88,7 @@ class GeminiClient:
 
     @property
     def enabled(self) -> bool:
-        return bool(self.api_key)
+        return bool(self.api_key) and settings.AI_ENABLED
 
     def available_models(self) -> list[str]:
         now = self._clock()
@@ -329,3 +329,14 @@ def get_ai_client() -> GeminiClient:
     if _client is None:
         _client = GeminiClient()
     return _client
+
+
+def reset_ai_client() -> None:
+    """Quản trị viên đổi cấu hình AI: lần gọi sau tạo client mới theo cấu hình mới."""
+    global _client
+    _client = None
+
+
+def off_reason() -> str:
+    """Lý do AI không chạy, dùng trong cảnh báo chế độ dự phòng."""
+    return "Quản trị viên đang tắt AI" if not settings.AI_ENABLED else "Chưa cấu hình GEMINI_API_KEY"
