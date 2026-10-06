@@ -533,4 +533,33 @@ class TiersIn(BaseModel):
     tiers: list[TierIn] = Field(min_length=1)
 
 
+
+# ---------- Đổi trả, bảo hành ----------
+class ReturnItemIn(BaseModel):
+    invoice_item_id: int
+    quantity: int = Field(gt=0, le=9999)
+    item_condition: Literal["sellable", "defective"] = "sellable"
+    serial_no: str | None = Field(default=None, max_length=50)  # bắt buộc với hàng có serial (FR-RET-04)
+
+
+class ReturnIn(BaseModel):
+    invoice_id: int
+    reason: Reason
+    items: list[ReturnItemIn] = Field(min_length=1)
+    exchange_items: list["InvoiceItemIn"] = Field(default_factory=list)  # đổi sang sản phẩm khác (BR-34)
+    exchange_payment_method: PaymentMethod = "cash"
+    exchange_payment_ref: str | None = Field(default=None, max_length=50)
+
+
+class TicketIn(BaseModel):
+    warranty_id: int
+    issue_description: str = Field(min_length=5, max_length=2000)
+
+
+class TicketUpdateIn(BaseModel):
+    status: Literal["received", "in_repair", "waiting_parts", "done", "rejected", "returned"] | None = None
+    resolution: str | None = Field(default=None, max_length=2000)
+
+
 ValidateCodeIn.model_rebuild()
+ReturnIn.model_rebuild()
