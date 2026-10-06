@@ -159,3 +159,9 @@ def export_invoices(format: str = Query("xlsx", pattern="^(csv|xlsx|pdf)$"),
         [("Chi tiết", ["Mã HĐ", "Thời gian", "Khách hàng", "Tổng tiền", "Thanh toán", "Trạng thái"],
           pdf_rows, [1.6, 1.6, 2.2, 1.3, 1.3, 1.3])],
     ), "pdf", name)
+
+
+# SRS bảng 8.10 đặt API xuất file ở /api/export/*; giữ /api/reports/export/* cho giao diện cũ
+export_router = APIRouter(prefix="/api/export", tags=["reports"])
+export_router.get("/revenue")(export_revenue)
+export_router.get("/invoices")(export_invoices)

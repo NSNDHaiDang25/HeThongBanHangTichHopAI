@@ -153,8 +153,8 @@ flowchart LR
 | Mục | Nội dung |
 |---|---|
 | Actor | Chủ cửa hàng |
-| Luồng chính | 1. Nhập câu hỏi ("Tháng này mặt hàng nào bán chậm?") → 2. Hệ thống nhận diện kỳ (hôm nay, hôm qua, 7 ngày, tháng này, tháng trước, tháng N, năm nay) → 3. Tính số liệu tổng hợp kỳ đó → 4. AI trả lời dựa trên số liệu → 5. Hiển thị kèm kỳ dữ liệu đã dùng |
-| Thiết kế an toàn | **Không** cho AI sinh SQL chạy trực tiếp → không thể đọc/sửa dữ liệu ngoài phạm vi, không lộ dữ liệu cá nhân |
+| Luồng chính | 1. Nhập câu hỏi ("Tháng này mặt hàng nào bán chậm?") → 2. Gửi Gemini lược đồ 7 view `v_ai_*` và câu hỏi, AI trả đúng một câu SELECT → 3. Bộ kiểm tra SQL (chỉ SELECT, chỉ view cho phép, không chú thích, không nhiều câu lệnh) → 4. Chạy trên kết nối chỉ đọc, LIMIT 200, timeout 5 giây; lỗi cú pháp cho AI sửa một lần → 5. Gửi bảng kết quả cho AI diễn giải → 6. Hiển thị câu trả lời, bảng kết quả và câu SQL |
+| Thiết kế an toàn | Cập nhật theo SRS 6.5 (giả định A-20): text-to-SQL với 5 lớp bảo vệ (bảng 6.6). View đã bỏ cột nhạy cảm; SQL vi phạm không chạy và ghi `ai_logs` trạng thái `rejected_sql`. Với CSDL không phải SQLite, hệ thống quay về cách cũ: tự tính số liệu tổng hợp rồi gửi cho AI |
 
 ---
 
@@ -401,9 +401,9 @@ docs/                # tài liệu
 |---|---|---|---|---|---|---|
 | 1 | **Chatbot tư vấn sản phẩm** | Chatbot tư vấn (nút "Thêm vào giỏ" nối sang Bán hàng) | Staff, Owner | Nhu cầu khách + bảng sản phẩm **còn hàng** (mã, tên, nhóm, giá, tồn, mô tả) + 6 lượt hội thoại gần nhất | JSON `{answer, suggestions[{code, reason}]}` | Lọc trước (chỉ gửi hàng còn), JSON có cấu trúc, hậu kiểm loại mã sai/hết hàng, chống prompt injection trong quy tắc số 7 |
 | 2 | **AI sinh báo cáo doanh thu** | AI báo cáo doanh thu | Owner | JSON tổng hợp: doanh thu, lãi gộp, kỳ trước, theo nhóm, top/slow, sắp hết | Markdown 5 mục cố định | Số liệu do hệ thống tính, AI chỉ nhận xét; kiểm tra có tiêu đề `##`; không gửi dữ liệu cá nhân |
-| 3 | **Hỏi đáp dữ liệu bán hàng** | Hỏi đáp dữ liệu | Owner | Câu hỏi + JSON tổng hợp theo kỳ được nhận diện | Câu trả lời Markdown | Không text-to-SQL; AI chỉ thấy dữ liệu tổng hợp; nêu rõ kỳ dữ liệu |
+| 3 | **Hỏi đáp dữ liệu bán hàng** | Hỏi đáp dữ liệu | Owner | Bước 1: câu hỏi + lược đồ view `v_ai_*`. Bước 2: bảng kết quả truy vấn (không có thông tin cá nhân) | Câu SQL (JSON) rồi câu trả lời Markdown | Text-to-SQL theo SRS 6.5: kiểm tra SQL bằng code, kết nối chỉ đọc, LIMIT 200, timeout 5 giây, hiển thị câu SQL để kiểm chứng |
 
-**Vì sao không dùng RAG / text-to-SQL:** dữ liệu sản phẩm của cửa hàng nhỏ (vài chục đến vài trăm mặt hàng) vừa đủ nằm trong prompt; lọc bằng SQL trước khi gửi rẻ hơn và dễ kiểm soát hơn vector search. Text-to-SQL có rủi ro truy vấn sai, đọc bảng `users`/`customers`, hoặc tốn chi phí sửa lỗi SQL, nên không phù hợp với mức độ đề tài.
+**Vì sao không dùng RAG (text-to-SQL đã được bổ sung theo SRS 6.5, xem dòng 3 ở trên):** dữ liệu sản phẩm của cửa hàng nhỏ (vài chục đến vài trăm mặt hàng) vừa đủ nằm trong prompt; lọc bằng SQL trước khi gửi rẻ hơn và dễ kiểm soát hơn vector search. Text-to-SQL có rủi ro truy vấn sai, đọc bảng `users`/`customers`, hoặc tốn chi phí sửa lỗi SQL, nên không phù hợp với mức độ đề tài.
 
 **Luồng xử lý lỗi AI:**
 

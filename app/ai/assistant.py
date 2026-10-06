@@ -220,7 +220,16 @@ def fallback(db: Session, user: User, message: str) -> dict:
         d_from, d_to, label = detect_period(message)
         start, end = reports.parse_range(d_from, d_to)
         ctx = reports.ai_data_context(db, start, end)
-        return {**base, "answer": _fallback_answer(message, ctx, label), "tools": _used("sales_summary"),
+        # Nhãn công cụ khớp với nhánh _fallback_answer đã chọn (trước đây luôn ghi "Doanh thu tổng hợp")
+        if "cham" in q or "hang e" in q or "ton nhieu" in q or "chay" in q or "nhieu nhat" in q or "top" in q:
+            used = "product_sales_ranking"
+        elif "ton" in q or "het hang" in q or "nhap" in q:
+            used = "inventory_report"
+        elif "nhom" in q or "danh muc" in q:
+            used = "revenue_breakdown"
+        else:
+            used = "sales_summary"
+        return {**base, "answer": _fallback_answer(message, ctx, label), "tools": _used(used),
                 "period": ctx["period"], "period_label": label}
 
     products = _active_products(db)

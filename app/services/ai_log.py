@@ -25,10 +25,12 @@ def mask_sensitive(text: str | None) -> str:
 
 
 def status_of(result: dict) -> str:
+    if result.get("status"):  # dịch vụ đã xác định trạng thái (rejected_sql, timeout, invalid_format...)
+        return result["status"]
     if result.get("source") == "ai":
         return "success"
     warning = (result.get("warning") or "").lower()
-    if not warning:
+    if not warning or "chưa cấu hình" in warning:
         return "fallback"  # chưa cấu hình khóa API: trả lời bằng chế độ dự phòng
     if "429" in warning or "hết lượt" in warning or "quá tải" in warning or "hạn mức" in warning:
         return "rate_limited"

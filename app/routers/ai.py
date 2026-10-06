@@ -84,7 +84,9 @@ def ask(data: QuestionIn, db: Session = Depends(get_db), client: GeminiClient = 
     result = service.ask_data(db, client, data.question)
     ai_log.record(db, user, "qa", data.question, result, prompt_version="v1", model=client.model,
                   generated_sql=result.get("sql"))
-    meta = {k: result.get(k) for k in ("period", "period_label", "source", "warning", "latency_ms", "model")}
+    meta = {k: result.get(k) for k in ("period", "period_label", "source", "warning", "latency_ms", "model",
+                                       "sql", "columns", "row_count", "truncated")}
+    meta["rows"] = (result.get("rows") or [])[:50]  # lịch sử chỉ giữ 50 dòng đầu của bảng kết quả
     reply = history.append_turn(db, session, data.question, result["answer"], meta)
     db.commit()
     return {**result, "session_id": session.id, "session_title": session.title, "message_id": reply.id}

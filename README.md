@@ -1,8 +1,10 @@
-# SalesAI: Hệ thống quản lý bán hàng tích hợp AI
+# TechStore AI: Hệ thống quản lý bán hàng tích hợp AI
 
 Web app quản lý bán hàng cho cửa hàng bán lẻ: sản phẩm, khách hàng, hóa đơn, nhập hàng, tồn kho, báo cáo doanh thu, kèm **4 chức năng AI (Google Gemini)**: trợ lý đa năng, chatbot tư vấn sản phẩm, AI sinh báo cáo doanh thu, hỏi đáp dữ liệu bán hàng.
 
-**Công nghệ:** Python 3.11+ · FastAPI · SQLAlchemy 2 · SQLite (đổi được sang PostgreSQL/MySQL) · HTML/CSS/JavaScript thuần · Chart.js · Gemini API · pytest
+**Công nghệ:** Python 3.11+ · FastAPI · SQLAlchemy 2 · SQLite (đổi được sang PostgreSQL/MySQL) · React 18 + Vite · Chart.js · Gemini API · pytest
+
+Đặc tả yêu cầu: tài liệu SRS TechStore AI (Nhóm 1). Giao diện React theo SRS mục 2.6; giao diện HTML/JS cũ vẫn mở được ở `/classic`.
 
 ## Chạy nhanh
 
@@ -25,7 +27,7 @@ python -m scripts.seed
 uvicorn app.main:app --reload
 ```
 
-Mở **http://localhost:8000**. Camera quét QR chỉ hoạt động trên `localhost` hoặc HTTPS (quy định của trình duyệt). Tài liệu API (Swagger): http://localhost:8000/docs
+Mở **http://localhost:8000** (giao diện React, bản build có sẵn trong `static/app/`, không cần cài Node để chạy). Camera quét QR chỉ hoạt động trên `localhost` hoặc HTTPS (quy định của trình duyệt). Tài liệu API (Swagger): http://localhost:8000/docs
 
 | Tài khoản | Mật khẩu | Vai trò |
 |---|---|---|
@@ -65,7 +67,7 @@ Lần chạy đầu container tự tạo dữ liệu mẫu. CSDL lưu trong `./d
 | **Trợ lý đa năng** | `prompts/assistant.md` | Một khung chat hỏi được mọi thứ: sản phẩm, tồn kho, hóa đơn, khách hàng, doanh thu, xu hướng, nhập hàng, cách dùng phần mềm (`prompts/app_guide.md`), kiến thức chung. Gemini **function calling**: AI tự chọn trong 13 công cụ chỉ-đọc (`app/ai/tools.py`), không sinh SQL; công cụ lọc theo vai trò |
 | Chatbot tư vấn sản phẩm | `prompts/product_advisor_v3.md` | Chỉ gửi sản phẩm còn hàng; trả JSON; server hậu kiểm loại mã sai hoặc hết hàng; có nút "Thêm vào giỏ" |
 | AI sinh báo cáo doanh thu | `prompts/sales_report.md` | Hệ thống tính số liệu, AI viết nhận xét và khuyến nghị nhập hàng dạng Markdown |
-| Hỏi đáp dữ liệu bán hàng | `prompts/sales_qa.md` | Tự nhận diện kỳ ("tháng này", "tháng trước", "7 ngày"...), không cho AI chạy SQL |
+| Hỏi đáp dữ liệu bán hàng | `prompts/sales_sql.md`, `prompts/sales_qa.md` | **Text-to-SQL** theo SRS 6.5: AI sinh một câu SELECT trên 7 view `v_ai_*`, hệ thống kiểm tra rồi chạy chỉ đọc, AI diễn giải bảng kết quả; giao diện hiện bảng và câu SQL. Xem mục bên dưới |
 
 Xử lý lỗi AI gồm: timeout, retry có backoff khi gặp 429/5xx, xử lý phản hồi sai định dạng, và **chế độ dự phòng rule-based** khi chưa có key hoặc AI lỗi. Báo cáo AI và hỏi đáp dữ liệu không gửi tên, SĐT hay dữ liệu thanh toán của khách cho AI; trợ lý đa năng chỉ gửi tên / mã khách khi người dùng hỏi về khách hàng, SĐT luôn bị che (090****567), không gửi email, địa chỉ. Mọi lần gọi AI được ghi vào `logs/ai_calls.jsonl`.
 
@@ -75,7 +77,7 @@ Xử lý lỗi AI gồm: timeout, retry có backoff khi gặp 429/5xx, xử lý 
 pytest -q
 ```
 
-128 test gồm hóa đơn (`test_invoices.py`), tồn kho (`test_inventory.py`), báo cáo và xuất file (`test_reports.py`), AI (`test_ai.py`), trợ lý đa năng và công cụ tra cứu (`test_assistant.py`), lịch sử trò chuyện (`test_chat_history.py`), thanh toán, VietQR, quét mã và ảnh sản phẩm (`test_payments_images.py`). Test AI dùng client giả nên không cần mạng hay API key.
+300+ test gồm hóa đơn (`test_invoices.py`), tồn kho (`test_inventory.py`), báo cáo và xuất file (`test_reports.py`), AI (`test_ai.py`), hỏi đáp text-to-SQL và 5 lớp bảo vệ (`test_text_to_sql.py`), API bổ sung theo SRS 8.4 như nhập CSV, `/api/inventory/*`, `/api/export/*` (`test_srs_api.py`), trợ lý đa năng (`test_assistant.py`), lịch sử trò chuyện (`test_chat_history.py`), thanh toán, VietQR, quét mã và ảnh sản phẩm (`test_payments_images.py`). Test AI dùng client giả nên không cần mạng hay API key.
 
 So sánh 3 phiên bản prompt với Gemini thật (cần API key):
 
@@ -87,22 +89,50 @@ python -m scripts.compare_prompts --runs 3
 
 ```
 app/
-  main.py              Khởi tạo FastAPI, phục vụ giao diện
+  main.py              Khởi tạo FastAPI, phục vụ giao diện React (static/app) và giao diện cũ (/classic)
   config.py            Đọc cấu hình từ .env
-  models.py            9 bảng: users, categories, products, customers, invoices,
-                       invoice_items, import_receipts, import_items, stock_movements
+  models.py            Các bảng dữ liệu (SRS chương 7)
   schemas.py           Kiểm tra dữ liệu vào
   security.py          Băm mật khẩu, JWT, phân quyền
-  routers/             API: auth, catalog, customers, invoices, payments, reports, ai
-  services/            inventory.py (hóa đơn, nhập hàng, tồn kho), reports.py, export.py, qr.py (VietQR, tem QR)
-  ai/                  client.py (Gemini, function calling), prompts.py (nạp template), service.py (tư vấn, báo cáo, hỏi đáp),
-                       assistant.py (trợ lý đa năng), tools.py (công cụ tra cứu chỉ-đọc), history.py (lịch sử chat)
+  routers/             API theo SRS 8.4 (auth, catalog, product_import, inventory, invoices, aftersales, reports, ai, system...)
+  services/            Nghiệp vụ: sales, pricing, inventory, purchasing, aftersales, loyalty, reports, export, qr...
+  ai/                  client.py (Gemini), service.py (tư vấn, báo cáo, hỏi đáp), text_to_sql.py (view v_ai_*, kiểm tra SQL,
+                       kết nối chỉ đọc), assistant.py + tools.py (trợ lý đa năng), history.py (lịch sử chat)
+frontend/              Mã nguồn giao diện React (Vite): src/pages/ mỗi màn hình một file, src/ui/ thành phần dùng chung
+static/app/            Bản build React (npm run build), FastAPI phục vụ trực tiếp
+static/                Giao diện cũ: index.html, style.css, app.js; img/products/ (ảnh sản phẩm mẫu)
 prompts/               Prompt template (tách khỏi code)
-static/                Giao diện SPA: index.html, style.css, app.js; img/products/ (ảnh sản phẩm mẫu)
 scripts/               seed.py, compare_prompts.py
 tests/                 pytest
-docs/                  Tài liệu dự án
+docs/                  Tài liệu dự án; docs/templates/mau_nhap_san_pham.csv (mẫu nhập sản phẩm)
 ```
+
+### Sửa giao diện React
+
+```bash
+cd frontend
+npm install
+npm run dev      # http://localhost:5173, tự chuyển /api sang uvicorn ở cổng 8000
+npm run build    # ghi bản build vào static/app/ (nhớ commit thư mục này)
+```
+
+## Hỏi đáp dữ liệu bằng text-to-SQL (SRS 6.5)
+
+Luồng UC-47: AI nhận lược đồ 7 view và câu hỏi, trả về đúng một câu `SELECT`; hệ thống kiểm tra, chạy, rồi gửi bảng kết quả cho AI diễn giải. Giao diện hiển thị câu trả lời, bảng kết quả và câu SQL đã chạy (FR-AIQ-07).
+
+| Lớp bảo vệ (bảng 6.6) | Cài đặt |
+|---|---|
+| 1. Chỉ chủ cửa hàng | `/api/ai/ask` dùng quyền `MANAGERS`, nhân viên nhận 403 |
+| 2. AI chỉ biết view an toàn | `v_ai_products`, `v_ai_sales_lines`, `v_ai_sales_daily`, `v_ai_inventory`, `v_ai_purchases`, `v_ai_returns`, `v_ai_customers` (khách chỉ có mã KHxxxx) |
+| 3. Kiểm tra SQL bằng code | `validate_sql()`: một câu SELECT/WITH, không chú thích, không `;` giữa câu, chỉ đọc view `v_ai_*`, cấm INSERT/UPDATE/DELETE/DROP/ALTER/ATTACH/PRAGMA/CREATE/REPLACE và hàm hệ thống |
+| 4. Kết nối chỉ đọc | SQLite mở `mode=ro` và `PRAGMA query_only = ON` |
+| 5. Giới hạn | Tự bọc `LIMIT 200`, dừng sau 5 giây bằng `set_progress_handler` |
+
+SQL vi phạm không được chạy và được ghi `ai_logs.status = rejected_sql`. Lỗi cú pháp được gửi lại cho AI sửa đúng một lần (FR-AIQ-08). Khi chưa có `GEMINI_API_KEY`, hệ thống dùng các câu SQL mẫu theo từ khóa, đi qua cùng bộ kiểm tra và kết nối chỉ đọc. Các view được tạo lại mỗi lần khởi động. Với CSDL không phải SQLite, tính năng quay về cách cũ: hệ thống tự tổng hợp số liệu rồi gửi cho AI.
+
+## Nhập sản phẩm từ CSV (SRS 7.7)
+
+Trang **Sản phẩm** → **Nhập CSV**: tải tệp mẫu, điền, bấm **Kiểm tra tệp** để xem trước, rồi **Nhập**. Cột bắt buộc: `sku`, `ten`, `gia_ban`. Một dòng lỗi thì không dòng nào được ghi; SKU đã có được bỏ qua; nhóm hàng chưa có sẽ được tạo mới. Tồn đầu kỳ nhập bằng phiếu nhập. API: `GET /api/products/import-template`, `POST /api/products/import?dry_run=true|false`.
 
 ## Tài liệu
 

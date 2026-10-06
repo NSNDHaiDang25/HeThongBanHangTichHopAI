@@ -127,12 +127,17 @@ def test_ai_report_fallback_on_timeout(client, owner_h, fake_ai):
 
 # ---------------- Hỏi đáp dữ liệu ----------------
 def test_ask_data_uses_system_data(client, owner_h, fake_ai):
+    """UC-47: AI sinh SQL trên view, hệ thống chạy rồi gửi bảng kết quả cho AI diễn giải."""
     sell(client, owner_h, "PK003", 4)
-    fake_ai.response = "Tháng này PK001 bán chậm."
+    sql = ("SELECT p.name, p.stock_qty, COALESCE(SUM(s.quantity), 0) AS sold FROM v_ai_products p "
+           "LEFT JOIN v_ai_sales_lines s ON s.sku = p.sku WHERE p.stock_qty > 0 GROUP BY p.name, p.stock_qty ORDER BY sold")
+    fake_ai.responses = [json.dumps({"sql": sql}), "Tháng này Tai nghe Bluetooth A1 bán chậm."]
     body = client.post("/api/ai/ask", json={"question": "Tháng này mặt hàng nào bán chậm?"}, headers=owner_h).json()
-    assert body["period_label"] == "tháng này"
-    assert body["answer"] == "Tháng này PK001 bán chậm."
-    assert "slow_products" in fake_ai.calls[0]["user"]
+    assert body["answer"] == "Tháng này Tai nghe Bluetooth A1 bán chậm."
+    assert body["columns"] == ["name", "stock_qty", "sold"]
+    assert body["rows"][0] == ["Tai nghe Bluetooth A1", 12, 0] and body["sql"].startswith("SELECT p.name")
+    assert "v_ai_sales_lines" in fake_ai.calls[0]["system"] and fake_ai.calls[0]["json_mode"]
+    assert "Tai nghe Bluetooth A1" in fake_ai.calls[1]["user"]  # bảng kết quả gửi cho AI diễn giải
 
 
 def test_ask_data_fallback_slow_products(client, owner_h, fake_ai):
@@ -168,7 +173,7 @@ def test_parse_budget(text, budget):
 
 
 def test_prompt_files_render():
-    for name in ["product_advisor_v1", "product_advisor_v2", "product_advisor_v3", "sales_report", "sales_qa"]:
+    for name in ["product_advisor_v1", "product_advisor_v2", "product_advisor_v3", "sales_report", "sales_qa", "sales_sql", "sales_qa_context"]:
         system, user = load_prompt(name)
         assert system and user
     with pytest.raises(KeyError):
@@ -233,3 +238,17 @@ def test_gemini_client_auth_error_not_retried(monkeypatch):
     with pytest.raises(AIError) as e:
         _client_with(handler, retries=3).generate("s", "u")
     assert e.value.kind == "config" and len(calls) == 1
+
+
+def test_fallback_advise_ignores_budget_numbers(db):
+    """'20 triệu' không được khớp nhầm sản phẩm có '20' trong tên (Sạc nhanh 20W)."""
+    products = service._active_products(db)
+    picks = service._fallback_advise(products, "tai nghe dưới 20 triệu")["suggestions"]
+    assert picks and all(p["name"].startswith("Tai nghe") for p in picks)
+    assert service._fallback_advise(products, "sạc 20W")["suggestions"][0]["code"] == "PK003"
+
+
+def test_assistant_fallback_tool_label_matches_answer(client, owner_h, fake_ai):
+    fake_ai.enabled = False
+    body = client.post("/api/ai/assistant", json={"message": "Sản phẩm nào sắp hết hàng cần nhập?"}, headers=owner_h).json()
+    assert [t["name"] for t in body["tools"]] == ["inventory_report"]

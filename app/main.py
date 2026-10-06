@@ -2,14 +2,14 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import engine, ensure_schema
-from app.routers import (aftersales, ai, auth, catalog, customers, invoices, loyalty, payments, promotions, purchasing, reports,
-                         system)
+from app.routers import (aftersales, ai, auth, catalog, customers, inventory, invoices, loyalty, payments, product_import,
+                         promotions, purchasing, reports, system)
 from app.services.audit import client_ip
 
 logging.basicConfig(level=logging.INFO)
@@ -60,8 +60,11 @@ async def value_error_handler(_: Request, exc: ValueError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
-for r in (auth, aftersales, catalog, customers, invoices, loyalty, payments, promotions, purchasing, reports, ai, system):
+# product_import đứng trước catalog để /api/products/import-template không bị hiểu là /api/products/{product_id}
+for r in (auth, aftersales, product_import, catalog, customers, inventory, invoices, loyalty, payments, promotions, purchasing,
+          reports, ai, system):
     app.include_router(r.router)
+app.include_router(reports.export_router)  # đường dẫn /api/export/* theo SRS bảng 8.10
 
 
 @app.get("/api/health")
@@ -83,12 +86,34 @@ settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 
+NO_CACHE = {"Cache-Control": "no-cache"}
+REACT_INDEX = settings.STATIC_DIR / "app" / "index.html"   # bản build React (frontend/, `npm run build`)
+CLASSIC_INDEX = settings.STATIC_DIR / "index.html"          # giao diện cũ (HTML/JS thuần), giữ để dự phòng
+
+
+def _spa_index() -> FileResponse:
+    return FileResponse(REACT_INDEX if REACT_INDEX.exists() else CLASSIC_INDEX, headers=NO_CACHE)
+
+
 @app.get("/", include_in_schema=False)
 def index():
-    return FileResponse(settings.STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+    return _spa_index()
+
+
+@app.get("/classic", include_in_schema=False)
+def classic():
+    return FileResponse(CLASSIC_INDEX, headers=NO_CACHE)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     # Trình duyệt tự gọi /favicon.ico ở các trang không khai báo icon (ví dụ /docs)
     return FileResponse(settings.STATIC_DIR / "img" / "favicon.svg", media_type="image/svg+xml")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def spa_fallback(full_path: str):
+    """Giao diện React dùng đường dẫn thật (/pos, /reports...): mọi đường dẫn không phải API trả về index.html."""
+    if full_path.startswith(("api/", "static/", "uploads/")):
+        raise HTTPException(404, "Không tìm thấy")
+    return _spa_index()

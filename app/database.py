@@ -108,6 +108,8 @@ def ensure_schema(bind) -> None:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
                     for sql in DATA_MIGRATIONS.get((table, name), []):
                         conn.execute(text(sql))
+        from app.ai.text_to_sql import ensure_views
+        ensure_views(conn, recreate=True)  # view v_ai_* cho hỏi đáp dữ liệu (SRS 6.5, 7.5)
     from app.services.bootstrap import ensure_reference_data
     ensure_reference_data(bind)
 

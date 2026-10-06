@@ -23,6 +23,8 @@ class FakeAI:
         self.enabled = True
         self.model = "fake-model"
         self.response: str | Exception = '{"answer": "ok", "suggestions": []}'
+        # Nếu có: generate() lần lượt trả từng phần tử (chuỗi hoặc Exception), hết thì dùng self.response
+        self.responses: list = []
         self.calls: list[dict] = []
         # Kịch bản cho chat() (trợ lý đa năng), mỗi lượt là: chuỗi = trả lời văn bản,
         # list = danh sách lệnh gọi công cụ [{"name": ..., "args": {...}}], Exception = lỗi
@@ -31,9 +33,10 @@ class FakeAI:
 
     def generate(self, system, user, *, json_mode=False, temperature=0.3, feature="unknown"):
         self.calls.append({"system": system, "user": user, "json_mode": json_mode, "feature": feature})
-        if isinstance(self.response, Exception):
-            raise self.response
-        return AIResult(text=self.response, model=self.model, latency_ms=5)
+        step = self.responses.pop(0) if self.responses else self.response
+        if isinstance(step, Exception):
+            raise step
+        return AIResult(text=step, model=self.model, latency_ms=5)
 
     def has_available_model(self):
         return self.available

@@ -5,13 +5,15 @@ Mỗi chức năng đều có chế độ dự phòng (rule-based) khi chưa c�
 """
 import json
 import re
+import sqlite3
 import unicodedata
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from app.ai.client import AIError, GeminiClient
+from app.ai import text_to_sql as tts
+from app.ai.client import AIError, AIResult, GeminiClient
 from app.ai.prompts import render_prompt
 from app.models import Product, now
 from app.services import reports
@@ -112,17 +114,23 @@ def _fallback_advise(products: list[Product], message: str) -> dict:
     """Tư vấn dự phòng: chấm điểm theo từ khóa trùng khớp + lọc ngân sách + chỉ hàng còn."""
     stop = {"toi", "can", "mua", "cho", "mot", "cai", "co", "khong", "duoi", "tren", "gia",
             "khach", "hang", "con", "va", "la", "nao", "loai", "muon", "tim", "san", "pham"}
-    words = {w for w in re.findall(r"[a-z0-9]+", strip_accents(message)) if len(w) > 1 and w not in stop}
+    text = strip_accents(message)
+    # Bỏ cụm ngân sách ("20 triệu", "500k", "1.500.000") khỏi từ khóa: "20" không được khớp "Sạc 20W"
+    text = re.sub(r"\d+(?:[.,]\d+)*\s*(?:trieu|tr|k|nghin|ngan|dong|d|vnd)?\b", " ", text)
+    stop |= {"trieu", "tr", "nghin", "ngan", "dong", "vnd", "tam", "khoang", "re", "dat"}
+    words = {w for w in re.findall(r"[a-z0-9]+", text) if len(w) > 1 and w not in stop}
     budget = parse_budget(message)
+    tokens = lambda t: set(re.findall(r"[a-z0-9]+", strip_accents(t or "")))  # noqa: E731
     scored = []
     for p in products:
         if p.stock <= 0 or (budget and p.sale_price > budget):
             continue
-        hay = strip_accents(f"{p.name} {p.category.name if p.category else ''} {p.description or ''}")
-        name = strip_accents(p.name)
-        score = sum(2 if w in name else 1 for w in words if w in hay)
+        cat, name, desc = tokens(p.category.name if p.category else ""), tokens(f"{p.name} {p.brand or ''}"), tokens(p.description)
+        # Khớp nguyên từ (không khớp chuỗi con); trùng nhóm hàng nặng nhất, rồi tên / hãng, rồi mô tả
+        score = sum(3 if w in cat else 2 if w in name else 1 if w in desc else 0 for w in words)
         if score:
-            scored.append((score, -p.sale_price, p))
+            # Cùng điểm: ưu tiên sản phẩm giá gần ngân sách (khách đã nêu mức chi), không có ngân sách thì rẻ trước
+            scored.append((score, p.sale_price if budget else -p.sale_price, p))
     scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
     picks = [s[2] for s in scored[:3]]
     if not picks:
@@ -314,8 +322,8 @@ def _fallback_answer(question: str, ctx: dict, label: str) -> str:
                    f"- Lãi gộp ước tính: {fmt_vnd(s['gross_profit'])}")
 
 
-def ask_data(db: Session, client: GeminiClient, question: str) -> dict:
-    question = clean_input(question, 500)
+def _ask_from_context(db: Session, client: GeminiClient, question: str) -> dict:
+    """Cách cũ, dùng khi CSDL không phải SQLite: hệ thống tự tổng hợp số liệu theo kỳ rồi gửi cho AI."""
     d_from, d_to, label = detect_period(question)
     start, end = reports.parse_range(d_from, d_to)
     ctx = reports.ai_data_context(db, start, end)
@@ -324,7 +332,7 @@ def ask_data(db: Session, client: GeminiClient, question: str) -> dict:
         return {**base, "answer": _fallback_answer(question, ctx, label), "source": "fallback",
                 "warning": "Chưa cấu hình GEMINI_API_KEY - đang trả lời theo mẫu."}
     system, user = render_prompt(
-        "sales_qa", question=question, date_from=ctx["period"]["from"], date_to=ctx["period"]["to"],
+        "sales_qa_context", question=question, date_from=ctx["period"]["from"], date_to=ctx["period"]["to"],
         data_json=json.dumps(ctx, ensure_ascii=False, indent=1),
     )
     try:
@@ -333,3 +341,153 @@ def ask_data(db: Session, client: GeminiClient, question: str) -> dict:
         return {**base, "answer": _fallback_answer(question, ctx, label), "source": "fallback", "warning": str(e)}
     return {**base, "answer": result.text, "source": "ai", "warning": None, "latency_ms": result.latency_ms,
             "model": result.model}
+
+
+# ---------------------------------------------------------------- Hỏi đáp bằng text-to-SQL (SRS 6.5)
+# Câu SQL mẫu cho chế độ dự phòng (chưa có khóa API): vẫn đi qua đúng bộ kiểm tra và kết nối chỉ đọc.
+_FALLBACK_SQL = [
+    (("cham", "hang e", "ton nhieu"), "Các mặt hàng bán chậm nhất (còn tồn kho)",
+     "SELECT p.name AS san_pham, p.stock_qty AS ton_kho, COALESCE(SUM(s.quantity), 0) AS da_ban\n"
+     "FROM v_ai_products p\nLEFT JOIN v_ai_sales_lines s ON s.sku = p.sku AND s.sold_date BETWEEN '{f}' AND '{t}'\n"
+     "WHERE p.stock_qty > 0\nGROUP BY p.sku, p.name, p.stock_qty\nORDER BY da_ban ASC, ton_kho DESC\nLIMIT 10"),
+    (("chay", "nhieu nhat", "top"), "Các mặt hàng bán chạy nhất",
+     "SELECT product_name AS san_pham, SUM(quantity) AS so_luong, SUM(net_revenue) AS doanh_thu\n"
+     "FROM v_ai_sales_lines\nWHERE sold_date BETWEEN '{f}' AND '{t}'\nGROUP BY sku, product_name\n"
+     "ORDER BY so_luong DESC, doanh_thu DESC\nLIMIT 10"),
+    (("het hang", "sap het", "nhap", "ton kho"), "Sản phẩm sắp hết hoặc cần nhập thêm",
+     "SELECT name AS san_pham, stock_qty AS ton_kho, min_stock_level AS ton_toi_thieu, sold_30d AS ban_30_ngay\n"
+     "FROM v_ai_inventory\nWHERE stock_qty <= min_stock_level\nORDER BY stock_qty ASC, sold_30d DESC"),
+    (("nhom", "danh muc", "loai hang"), "Doanh thu theo nhóm hàng",
+     "SELECT category AS nhom_hang, SUM(quantity) AS so_luong, SUM(net_revenue) AS doanh_thu\n"
+     "FROM v_ai_sales_lines\nWHERE sold_date BETWEEN '{f}' AND '{t}'\nGROUP BY category\nORDER BY doanh_thu DESC"),
+    (("khung gio", "cao diem", "theo gio", "gio nao"), "Doanh thu theo khung giờ",
+     "SELECT sold_hour AS gio, COUNT(DISTINCT invoice_code) AS so_hoa_don, SUM(net_revenue) AS doanh_thu\n"
+     "FROM v_ai_sales_lines\nWHERE sold_date BETWEEN '{f}' AND '{t}'\nGROUP BY sold_hour\nORDER BY doanh_thu DESC"),
+    ((), "Tổng hợp doanh thu",
+     "SELECT COUNT(DISTINCT invoice_code) AS so_hoa_don, COALESCE(SUM(net_revenue), 0) AS doanh_thu,\n"
+     "       COALESCE(SUM(net_revenue - vat_amount - cost_amount), 0) AS lai_gop\n"
+     "FROM v_ai_sales_lines\nWHERE sold_date BETWEEN '{f}' AND '{t}'"),
+]
+_MONEY_COLS = ("doanh_thu", "lai_gop", "revenue", "net_revenue", "gross_profit", "stock_value", "refund", "total",
+               "price", "cost", "amount", "tien", "gia")
+_COL_VI = {"san_pham": "Sản phẩm", "ton_kho": "tồn", "da_ban": "đã bán", "so_luong": "số lượng", "doanh_thu": "doanh thu",
+           "ton_toi_thieu": "tối thiểu", "ban_30_ngay": "bán 30 ngày", "nhom_hang": "Nhóm", "gio": "Giờ",
+           "so_hoa_don": "số hóa đơn", "lai_gop": "lãi gộp"}
+
+
+def _fmt_cell(col: str, value) -> str:
+    if isinstance(value, (int, float)) and any(k in col.lower() for k in _MONEY_COLS):
+        return fmt_vnd(int(value))
+    if isinstance(value, float):
+        return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return "" if value is None else str(value)
+
+
+def format_rows(title: str, columns: list[str], rows: list[list], limit: int = 10) -> str:
+    """Viết câu trả lời từ bảng kết quả khi không có AI diễn giải (chế độ dự phòng hoặc AI lỗi ở bước 5)."""
+    if not rows:
+        return f"{title}: không có dữ liệu phù hợp trong kỳ này."
+    if len(rows) == 1 and len(columns) > 1:
+        return f"{title}:\n" + "\n".join(f"- {_COL_VI.get(c, c).capitalize()}: {_fmt_cell(c, v)}" for c, v in zip(columns, rows[0]))
+    lines = []
+    for r in rows[:limit]:
+        head = _fmt_cell(columns[0], r[0])
+        rest = ", ".join(f"{_COL_VI.get(c, c)} {_fmt_cell(c, v)}" for c, v in zip(columns[1:], r[1:]))
+        lines.append(f"- {head}: {rest}" if rest else f"- {head}")
+    more = f"\n- ... và {len(rows) - limit} dòng khác (xem bảng kết quả)" if len(rows) > limit else ""
+    return f"{title}:\n" + "\n".join(lines) + more
+
+
+def _table(q: tts.QueryResult) -> dict:
+    return {"sql": q.sql, "columns": q.columns, "rows": q.rows, "row_count": len(q.rows), "truncated": q.truncated}
+
+
+def _ask_fallback(db: Session, question: str, warning: str) -> dict:
+    d_from, d_to, label = detect_period(question)
+    q = strip_accents(question)
+    title, sql = next((t, s) for keys, t, s in _FALLBACK_SQL if not keys or any(k in q for k in keys))
+    res = tts.run_sql(db, sql.format(f=d_from.isoformat(), t=d_to.isoformat()))
+    return {**_table(res), "answer": format_rows(title, res.columns, res.rows), "source": "fallback", "warning": warning,
+            "period": {"from": d_from.isoformat(), "to": d_to.isoformat(), "days": (d_to - d_from).days + 1},
+            "period_label": label}
+
+
+def _gen_sql(client: GeminiClient, question: str, today: date, hint: str, error_block: str = "") -> tuple[dict, AIResult]:
+    system, user = render_prompt("sales_sql", schema=tts.VIEW_SCHEMA, today=today.isoformat(), question=question,
+                                 period_hint=hint, error_block=error_block)
+    result = client.generate(system, user, json_mode=True, temperature=0.0, feature="sales_sql")
+    return extract_json(result.text), result
+
+
+def ask_data(db: Session, client: GeminiClient, question: str) -> dict:
+    """UC-47: AI sinh SQL trên view v_ai_*, hệ thống kiểm tra, chạy chỉ đọc, rồi AI diễn giải kết quả."""
+    question = clean_input(question, 500)
+    if db.get_bind().dialect.name != "sqlite":
+        return _ask_from_context(db, client, question)
+    if not client.enabled:
+        return _ask_fallback(db, question, "Chưa cấu hình GEMINI_API_KEY - đang dùng câu truy vấn mẫu theo từ khóa.")
+
+    today = now().date()
+    d_from, d_to, label = detect_period(question)
+    hint = f"Gợi ý kỳ dữ liệu: {label} ({d_from.isoformat()} đến {d_to.isoformat()})."
+    latency, retries, model = 0, 0, client.model
+
+    # Bước 2: AI sinh SQL
+    try:
+        data, r = _gen_sql(client, question, today, hint)
+    except AIError as e:
+        status = "invalid_format" if e.kind == "bad_response" else None
+        out = _ask_fallback(db, question, f"AI lỗi khi sinh truy vấn ({e}); đang dùng câu truy vấn mẫu.")
+        return {**out, **({"status": status} if status else {})}
+    latency, model = r.latency_ms or 0, r.model
+    sql = data.get("sql")
+    if not sql:  # AI từ chối hợp lệ: hỏi thông tin cá nhân, ngoài phạm vi...
+        reason = str(data.get("reason") or "Câu hỏi nằm ngoài phạm vi dữ liệu bán hàng.")
+        return {"answer": f"Mình không trả lời được câu này bằng dữ liệu hệ thống: {reason}\n\n"
+                          "Thông tin cá nhân của khách hàng xem tại màn hình Khách hàng.",
+                "sql": None, "source": "ai", "warning": None, "latency_ms": latency, "model": model}
+
+    # Bước 3, 4: kiểm tra và chạy; lỗi cú pháp cho AI sửa đúng một lần (FR-AIQ-08)
+    res = None
+    for attempt in range(2):
+        try:
+            res = tts.run_sql(db, sql)
+            break
+        except tts.SQLRejected as e:
+            return {"answer": f"Câu hỏi này cần truy vấn ngoài phạm vi cho phép nên hệ thống không chạy ({e}). "
+                              "Bạn thử diễn đạt lại, ví dụ hỏi về doanh thu, sản phẩm, tồn kho hoặc nhập hàng.",
+                    "sql": sql, "source": "ai", "status": "rejected_sql", "warning": str(e),
+                    "latency_ms": latency, "model": model, "retry_count": retries}
+        except tts.SQLTimeout as e:
+            return {"answer": "Truy vấn chạy quá lâu nên đã dừng. Bạn thử thu hẹp kỳ dữ liệu hoặc hỏi cụ thể hơn.",
+                    "sql": sql, "source": "fallback", "status": "timeout", "warning": str(e),
+                    "latency_ms": latency, "model": model, "retry_count": retries}
+        except sqlite3.Error as e:
+            if attempt == 1:
+                return {"answer": "AI chưa viết được câu truy vấn đúng cho câu hỏi này. Bạn thử diễn đạt lại rõ hơn.",
+                        "sql": sql, "source": "fallback", "status": "error", "warning": f"Lỗi SQL: {e}",
+                        "latency_ms": latency, "model": model, "retry_count": retries}
+            retries = 1
+            err = f"Câu SQL trước bị lỗi khi chạy:\n```sql\n{sql}\n```\nThông báo lỗi: {e}\nHãy sửa lại."
+            try:
+                data, r = _gen_sql(client, question, today, hint, err)
+            except AIError as ae:
+                return {"answer": "AI không sửa được câu truy vấn. Bạn thử hỏi lại sau.", "sql": sql,
+                        "source": "fallback", "warning": str(ae), "latency_ms": latency, "model": model,
+                        "retry_count": retries}
+            latency += r.latency_ms or 0
+            sql = data.get("sql") or ""
+
+    table = _table(res)
+    # Bước 5: AI diễn giải kết quả (không có thông tin cá nhân trong view)
+    rows_json = json.dumps([dict(zip(res.columns, row)) for row in res.rows], ensure_ascii=False, default=str)
+    system, user = render_prompt("sales_qa", question=question, today=today.isoformat(), sql=res.sql,
+                                 row_count=len(res.rows), rows_json=rows_json)
+    try:
+        r = client.generate(system, user, temperature=0.2, feature="sales_qa")
+    except AIError as e:
+        return {**table, "answer": format_rows("Kết quả truy vấn", res.columns, res.rows), "source": "fallback",
+                "warning": f"AI chưa diễn giải được kết quả ({e}), đang hiển thị kết quả thô.",
+                "latency_ms": latency, "model": model, "retry_count": retries}
+    return {**table, "answer": r.text, "source": "ai", "warning": None, "latency_ms": latency + (r.latency_ms or 0),
+            "model": r.model, "retry_count": retries}
