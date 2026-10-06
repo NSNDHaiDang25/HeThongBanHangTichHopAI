@@ -23,9 +23,9 @@ def po(client, h, supplier_id, items, **kw):
 # ---------------------------------------------------------------- Nhà cung cấp
 def test_supplier_crud_and_unique_code(client, owner_h, staff_h):
     s = make_supplier(client, owner_h)
-    assert s["code"] == "NCC001" and s["status"] == "active"
-    assert make_supplier(client, owner_h, name="NCC 2")["code"] == "NCC002"
-    dup = client.post("/api/suppliers", json={"code": "NCC001", "name": "Trùng"}, headers=owner_h)
+    assert s["code"] == "NCC01" and s["status"] == "active"
+    assert make_supplier(client, owner_h, name="NCC 2")["code"] == "NCC02"
+    dup = client.post("/api/suppliers", json={"code": "NCC01", "name": "Trùng"}, headers=owner_h)
     assert dup.status_code == 400
     assert client.post("/api/suppliers", json={"name": "X"}, headers=staff_h).status_code == 403
     staff_view = client.get("/api/suppliers", headers=staff_h).json()

@@ -43,7 +43,7 @@ def clean_serial(raw: str) -> str:
 # ---------------------------------------------------------------- Nhà cung cấp
 def next_supplier_code(db: Session) -> str:
     nums = [int(c[3:]) for c in db.scalars(select(Supplier.code).where(Supplier.code.like("NCC%"))) if c[3:].isdigit()]
-    return f"NCC{max(nums, default=0) + 1:03d}"
+    return f"NCC{max(nums, default=0) + 1:02d}"
 
 
 def _active_supplier(db: Session, supplier_id: int | None) -> Supplier:

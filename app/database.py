@@ -90,6 +90,10 @@ DATA_MIGRATIONS = {
         "WHERE invoices.customer_id = customers.id AND invoices.status = 'paid')",
     ],
     ("import_receipts", "received_at"): ["UPDATE import_receipts SET received_at = created_at"],
+    # Bản cũ chưa tách VAT: giá đã gồm VAT 10% (giả định mặc định của SRS), tách ra để báo cáo doanh thu chưa VAT
+    ("invoices", "vat_amount"): ["UPDATE invoices SET vat_amount = CAST(ROUND(total * 10.0 / 110) AS INTEGER)"],
+    ("invoice_items", "vat_amount"): [
+        "UPDATE invoice_items SET vat_amount = CAST(ROUND(line_total * 10.0 / 110) AS INTEGER)"],
 }
 
 

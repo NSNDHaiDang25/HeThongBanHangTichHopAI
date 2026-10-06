@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -13,10 +14,26 @@ from app.services.audit import client_ip
 
 logging.basicConfig(level=logging.INFO)
 
+async def _expire_pending_loop() -> None:
+    """BR-26: mỗi phút hủy các hóa đơn chờ chuyển khoản quá hạn và hoàn tồn kho (ngoài việc kiểm tra khi gọi API)."""
+    from app.database import SessionLocal
+    from app.services import sales
+    while True:
+        await asyncio.sleep(60)
+        try:
+            with SessionLocal() as db:
+                if sales.expire_pending(db):
+                    db.commit()
+        except Exception:  # noqa: BLE001 - vòng nền không được chết vì một lỗi
+            logging.getLogger(__name__).exception("Lỗi khi hủy hóa đơn chờ thanh toán quá hạn")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     ensure_schema(engine)
+    task = asyncio.create_task(_expire_pending_loop())
     yield
+    task.cancel()
 
 
 app = FastAPI(
