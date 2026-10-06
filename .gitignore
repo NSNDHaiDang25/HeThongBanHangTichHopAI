@@ -7,4 +7,7 @@ target/
 build/
 *.class
 data/*.db
-logs/
+logs/data/*.db-wal
+data/*.db-shm
+data/uploads/
+frontend/node_modules/

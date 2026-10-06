@@ -7,7 +7,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import engine, ensure_schema
-from app.routers import ai, auth, catalog, customers, invoices, payments, reports
+from app.routers import ai, auth, catalog, customers, invoices, loyalty, payments, reports, system
+from app.services.audit import client_ip
 
 logging.basicConfig(level=logging.INFO)
 
@@ -18,11 +19,22 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="Hệ thống quản lý bán hàng tích hợp AI",
+    title="TechStore AI - Hệ thống quản lý bán hàng tích hợp AI",
     version="1.0.0",
     description="Quản lý sản phẩm, khách hàng, hóa đơn, nhập hàng, tồn kho, báo cáo và trợ lý AI (Gemini).",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def remember_client_ip(request: Request, call_next):
+    """Lưu IP người gọi để ghi vào audit_logs. Sau proxy (Render, nginx) IP thật nằm trong X-Forwarded-For."""
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    token = client_ip.set((forwarded or (request.client.host if request.client else ""))[:45] or None)
+    try:
+        return await call_next(request)
+    finally:
+        client_ip.reset(token)
 
 
 @app.exception_handler(ValueError)
@@ -30,7 +42,7 @@ async def value_error_handler(_: Request, exc: ValueError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
-for r in (auth, catalog, customers, invoices, payments, reports, ai):
+for r in (auth, catalog, customers, invoices, loyalty, payments, reports, ai, system):
     app.include_router(r.router)
 
 

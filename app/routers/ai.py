@@ -4,21 +4,33 @@ from sqlalchemy.orm import Session
 
 from app.ai import assistant, history, service
 from app.ai.client import GeminiClient, get_ai_client
-from app.config import settings
 from app.database import get_db
 from app.models import ChatSession, User
 from app.schemas import AIReportIn, ChatIn, QuestionIn, SessionRename
 from app.security import ALL_STAFF, MANAGERS
+from app.services import ai_log, app_settings
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 
 @router.get("/status")
-def ai_status(client: GeminiClient = Depends(get_ai_client), _: User = Depends(ALL_STAFF)):
-    """model = model đang dùng được (None nếu mọi model đều đang hết lượt); models = tình trạng từng model."""
+def ai_status(db: Session = Depends(get_db), client: GeminiClient = Depends(get_ai_client),
+              _: User = Depends(ALL_STAFF)):
+    """model = model đang dùng được (None nếu mọi model đều đang hết lượt); models = tình trạng từng model.
+    switched_on = quản trị viên đang bật AI (ai_enabled); enabled = đã cấu hình khóa API."""
     info = client.status() if client.enabled else {"active_model": None, "models": []}
-    return {"enabled": client.enabled, "model": info["active_model"], "models": info["models"],
-            "advisor_prompt_version": settings.ADVISOR_PROMPT_VERSION}
+    cfg = app_settings.get_many(db, ["ai_enabled", "ai_prompt_version", "ai_rate_limit_per_hour"])
+    return {"enabled": client.enabled, "switched_on": cfg["ai_enabled"], "model": info["active_model"],
+            "models": info["models"], "advisor_prompt_version": cfg["ai_prompt_version"],
+            "rate_limit_per_hour": cfg["ai_rate_limit_per_hour"]}
+
+
+@router.get("/logs")
+def ai_logs(feature: str | None = None, status: str | None = None, user_id: int | None = None,
+            page: int = Query(1, ge=1), size: int = Query(50, ge=1, le=200),
+            db: Session = Depends(get_db), user: User = Depends(ALL_STAFF)):
+    """Nhật ký gọi AI. Quản trị viên, chủ cửa hàng xem tất cả; nhân viên chỉ xem lượt của mình."""
+    return ai_log.list_logs(db, user, feature, status, user_id, page, size)
 
 
 def _session_for(db: Session, user: User, kind: str, session_id: int | None, text: str) -> ChatSession:
@@ -29,11 +41,12 @@ def _session_for(db: Session, user: User, kind: str, session_id: int | None, tex
 
 
 @router.post("/assistant")
-def assistant_chat(data: ChatIn, db: Session = Depends(get_db), client: GeminiClient = Depends(get_ai_client),
-                   user: User = Depends(ALL_STAFF)):
+def assistant_chat(data: ChatIn, db: Session = Depends(get_db), client: GeminiClient = Depends(ai_log.configured_client),
+                   user: User = Depends(ALL_STAFF), _: User = Depends(ai_log.ai_guard)):
     """Trợ lý đa năng: AI tự gọi công cụ tra cứu phù hợp với vai trò người dùng."""
     session = _session_for(db, user, "assistant", data.session_id, data.message)
     result = assistant.reply(db, client, user, data.message, history.recent_history(session, 10))
+    ai_log.record(db, user, "assistant", data.message, result, model=client.model)
     meta = {k: result.get(k) for k in ("suggestions", "tools", "source", "warning", "latency_ms", "model", "period", "period_label")}
     reply = history.append_turn(db, session, data.message, result["answer"], meta)
     db.commit()
@@ -42,11 +55,12 @@ def assistant_chat(data: ChatIn, db: Session = Depends(get_db), client: GeminiCl
 
 @router.post("/advisor")
 def advisor(data: ChatIn, version: str | None = Query(None, pattern="^v[123]$"),
-            db: Session = Depends(get_db), client: GeminiClient = Depends(get_ai_client),
-            user: User = Depends(ALL_STAFF)):
+            db: Session = Depends(get_db), client: GeminiClient = Depends(ai_log.configured_client),
+            user: User = Depends(ALL_STAFF), _: User = Depends(ai_log.ai_guard)):
     session = _session_for(db, user, "advisor", data.session_id, data.message)
-    result = service.advise(db, client, data.message, history.recent_history(session),
-                            version or settings.ADVISOR_PROMPT_VERSION)
+    version = version or app_settings.get(db, "ai_prompt_version")
+    result = service.advise(db, client, data.message, history.recent_history(session), version)
+    ai_log.record(db, user, "advisor", data.message, result, prompt_version=version, model=client.model)
     meta = {k: result.get(k) for k in ("suggestions", "removed", "source", "version", "warning", "latency_ms", "model")}
     reply = history.append_turn(db, session, data.message, result["answer"], meta)
     db.commit()
@@ -54,16 +68,22 @@ def advisor(data: ChatIn, version: str | None = Query(None, pattern="^v[123]$"),
 
 
 @router.post("/report")
-def ai_report(data: AIReportIn, db: Session = Depends(get_db), client: GeminiClient = Depends(get_ai_client),
-              _: User = Depends(MANAGERS)):
-    return service.sales_report(db, client, data.date_from, data.date_to)
+def ai_report(data: AIReportIn, db: Session = Depends(get_db), client: GeminiClient = Depends(ai_log.configured_client),
+              user: User = Depends(MANAGERS), _: User = Depends(ai_log.ai_guard)):
+    result = service.sales_report(db, client, data.date_from, data.date_to)
+    ai_log.record(db, user, "report", f"Báo cáo {data.date_from or ''} - {data.date_to or ''}".strip(), result,
+                  prompt_version="v1", model=client.model, response=result.get("markdown"))
+    db.commit()
+    return result
 
 
 @router.post("/ask")
-def ask(data: QuestionIn, db: Session = Depends(get_db), client: GeminiClient = Depends(get_ai_client),
-        user: User = Depends(MANAGERS)):
+def ask(data: QuestionIn, db: Session = Depends(get_db), client: GeminiClient = Depends(ai_log.configured_client),
+        user: User = Depends(MANAGERS), _: User = Depends(ai_log.ai_guard)):
     session = _session_for(db, user, "ask", data.session_id, data.question)
     result = service.ask_data(db, client, data.question)
+    ai_log.record(db, user, "qa", data.question, result, prompt_version="v1", model=client.model,
+                  generated_sql=result.get("sql"))
     meta = {k: result.get(k) for k in ("period", "period_label", "source", "warning", "latency_ms", "model")}
     reply = history.append_turn(db, session, data.question, result["answer"], meta)
     db.commit()

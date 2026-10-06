@@ -1,16 +1,18 @@
 import hashlib
 import hmac
+import re
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.models import User
+from app.models import RevokedToken, User, now
 
 ALGORITHM = "HS256"
 BCRYPT_ROUNDS = 12  # mỗi lần băm ~0,2 giây: đủ chậm để chống dò mật khẩu, đăng nhập vẫn nhanh
@@ -50,13 +52,44 @@ def _verify_pbkdf2(password: str, stored: str) -> bool:
     return hmac.compare_digest(check, digest)
 
 
-def create_token(user: User) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": str(user.id), "role": user.role, "exp": expire}
+PASSWORD_RULE = "Mật khẩu chưa đủ mạnh: tối thiểu 8 ký tự, có cả chữ và số"
+
+
+def check_password_strength(password: str) -> str:
+    """BR-46 / FR-AUT-07: tối thiểu 8 ký tự gồm chữ và số."""
+    if len(password) < 8 or not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+        raise ValueError(PASSWORD_RULE)
+    return password
+
+
+def create_token(user: User, hours: int | None = None) -> str:
+    expire = datetime.now(timezone.utc) + (timedelta(hours=hours) if hours
+                                           else timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+    payload = {"sub": str(user.id), "role": user.role, "exp": expire, "jti": uuid.uuid4().hex}
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
+def decode_token(token: str) -> dict:
+    return jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+
+
+def revoke_token(db: Session, payload: dict) -> None:
+    """FR-AUT-05: lưu jti của token vào revoked_tokens; token đó bị từ chối ở mọi endpoint."""
+    jti = payload.get("jti")
+    if not jti or db.get(RevokedToken, jti):
+        return
+    exp = datetime.fromtimestamp(payload["exp"], timezone.utc).astimezone(timezone(timedelta(hours=7)))
+    db.add(RevokedToken(jti=jti, user_id=int(payload["sub"]), expires_at=exp.replace(tzinfo=None)))
+    # Dọn token đã hết hạn để bảng không phình mãi
+    db.query(RevokedToken).filter(RevokedToken.expires_at < now()).delete()
+
+
+# Người dùng phải đổi mật khẩu (tài khoản mới, vừa được đặt lại) chỉ gọi được các API này (FR-USR-02)
+PASSWORD_CHANGE_PATHS = {"/api/auth/change-password", "/api/auth/me", "/api/auth/logout"}
+
+
 def get_current_user(
+    request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(bearer),
     db: Session = Depends(get_db),
 ) -> User:
@@ -64,13 +97,18 @@ def get_current_user(
     if creds is None:
         raise unauthorized
     try:
-        payload = jwt.decode(creds.credentials, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        payload = decode_token(creds.credentials)
         user_id = int(payload["sub"])
     except (jwt.PyJWTError, KeyError, ValueError):
+        raise unauthorized
+    if payload.get("jti") and db.get(RevokedToken, payload["jti"]):
         raise unauthorized
     user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise unauthorized
+    if user.must_change_password and request.url.path not in PASSWORD_CHANGE_PATHS:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bạn cần đổi mật khẩu trước khi tiếp tục")
+    request.state.token_payload = payload
     return user
 
 

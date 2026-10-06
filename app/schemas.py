@@ -5,7 +5,8 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Role = Literal["admin", "owner", "staff"]
-PaymentMethod = Literal["cash", "transfer", "card", "qr"]
+# "transfer" và "qr" là tên cũ của chuyển khoản, vẫn nhận để không vỡ client cũ và được đổi thành bank_transfer
+PaymentMethod = Literal["cash", "bank_transfer", "card", "transfer", "qr"]
 CustomerGroup = Literal["regular", "vip", "wholesale"]
 
 
@@ -20,6 +21,31 @@ def _positive(message: str) -> AfterValidator:
             raise ValueError(message)
         return v
     return AfterValidator(check)
+
+
+def _strong_password(v: str) -> str:
+    from app.security import check_password_strength
+    return check_password_strength(v)
+
+
+StrongPassword = Annotated[str, Field(max_length=128), AfterValidator(_strong_password)]
+Reason = Annotated[str, Field(min_length=5, max_length=255)]  # lý do hủy, đổi trả, điều chỉnh (bảng 5.18)
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def normalize_phone(v: str | None) -> str | None:
+    if v:
+        v = re.sub(r"[\s.\-]", "", v)
+        if not re.fullmatch(r"0\d{9}", v):
+            raise ValueError("Số điện thoại phải gồm 10 chữ số, bắt đầu bằng 0")
+    return v or None
+
+
+def normalize_email(v: str | None) -> str | None:
+    v = (v or "").strip()
+    if v and (len(v) > 100 or not EMAIL_RE.match(v)):
+        raise ValueError("Email không hợp lệ")
+    return v or None
 
 
 SalePrice = Annotated[int, _positive("Giá bán phải lớn hơn 0")]
@@ -37,8 +63,13 @@ class UserOut(ORM):
     username: str
     full_name: str
     role: Role
+    email: str | None = None
+    phone: str | None = None
     is_active: bool
     pending: bool = False
+    must_change_password: bool = False
+    locked_until: datetime | None = None
+    last_login_at: datetime | None = None
 
 
 class TokenOut(BaseModel):
@@ -50,15 +81,26 @@ class TokenOut(BaseModel):
 class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=50)
     full_name: str = Field(min_length=1, max_length=100)
-    password: str = Field(min_length=6)
+    password: StrongPassword  # mật khẩu tạm, người dùng phải đổi ở lần đăng nhập đầu (FR-USR-02)
     role: Role = "staff"
+    email: Annotated[str | None, AfterValidator(normalize_email)] = None
+    phone: Annotated[str | None, AfterValidator(normalize_phone)] = None
+
+
+class ChangePasswordIn(BaseModel):
+    old_password: str = Field(min_length=1, max_length=128)
+    new_password: StrongPassword
+
+
+class AdminResetPasswordIn(BaseModel):
+    new_password: StrongPassword
 
 
 class RegisterIn(BaseModel):
     """Tự tạo tài khoản ở màn hình đăng nhập (chờ quản trị viên duyệt)."""
     username: str = Field(min_length=3, max_length=50)
     full_name: str = Field(min_length=1, max_length=100)
-    password: str = Field(min_length=6, max_length=128)
+    password: StrongPassword
 
     @field_validator("username")
     @classmethod
@@ -84,14 +126,17 @@ class ForgotPasswordIn(BaseModel):
 class ResetPasswordIn(BaseModel):
     username: str = Field(min_length=1, max_length=50)
     code: str = Field(min_length=1, max_length=12)
-    new_password: str = Field(min_length=6, max_length=128)
+    new_password: StrongPassword
 
 
 class UserUpdate(BaseModel):
     full_name: str | None = None
-    password: str | None = Field(default=None, min_length=6)
+    password: StrongPassword | None = None
     role: Role | None = None
     is_active: bool | None = None
+    email: Annotated[str | None, AfterValidator(normalize_email)] = None
+    phone: Annotated[str | None, AfterValidator(normalize_phone)] = None
+    unlock: bool = False  # mở khóa tạm do đăng nhập sai nhiều lần
 
 
 # ---------- Category ----------
@@ -287,3 +332,18 @@ class VietQRIn(BaseModel):
 class AIReportIn(BaseModel):
     date_from: str | None = None  # YYYY-MM-DD
     date_to: str | None = None
+
+
+# ---------- Hệ thống ----------
+class SettingsUpdateIn(BaseModel):
+    values: dict[str, str | int | float | bool] = Field(min_length=1)
+
+
+class TierIn(BaseModel):
+    id: int
+    min_total_spent: int = Field(ge=0, le=2_000_000_000)
+    points_multiplier: float = Field(ge=0, le=10)
+
+
+class TiersIn(BaseModel):
+    tiers: list[TierIn] = Field(min_length=1)

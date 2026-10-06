@@ -22,6 +22,9 @@ def make_engine(url: str, **kwargs):
         @event.listens_for(engine, "connect")
         def _fk_on(dbapi_conn, _):
             dbapi_conn.execute("PRAGMA foreign_keys=ON")
+            dbapi_conn.execute("PRAGMA busy_timeout=5000")  # SRS 2.6: chờ tối đa 5 giây khi quầy khác đang ghi
+            if db_path and db_path != ":memory:":
+                dbapi_conn.execute("PRAGMA journal_mode=WAL")
     return engine
 
 
@@ -32,9 +35,60 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 # Cột được thêm sau phiên bản đầu. create_all() không sửa bảng đã có nên bổ sung bằng ALTER TABLE,
 # giúp CSDL cũ vẫn chạy mà không phải xóa dữ liệu.
 ADDED_COLUMNS = {
-    "users": {"pending": "BOOLEAN NOT NULL DEFAULT FALSE"},
-    "products": {"image_url": "VARCHAR(255)"},
-    "invoices": {"cash_received": "INTEGER", "payment_ref": "VARCHAR(50)"},
+    "users": {
+        "pending": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "email": "VARCHAR(100)", "phone": "VARCHAR(15)",
+        "must_change_password": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "failed_login_count": "INTEGER NOT NULL DEFAULT 0",
+        "locked_until": "DATETIME", "last_login_at": "DATETIME", "updated_at": "DATETIME",
+    },
+    "categories": {
+        "default_vat_rate": "INTEGER NOT NULL DEFAULT 10",
+        "default_warranty_months": "INTEGER NOT NULL DEFAULT 12",
+        "is_active": "BOOLEAN NOT NULL DEFAULT TRUE",
+    },
+    "products": {
+        "image_url": "VARCHAR(255)", "barcode": "VARCHAR(20)", "brand": "VARCHAR(50)",
+        "vat_rate": "INTEGER NOT NULL DEFAULT 10", "track_serial": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "warranty_months": "INTEGER NOT NULL DEFAULT 12",
+    },
+    "customers": {
+        "birthday": "DATE", "tier_id": "INTEGER", "loyalty_points": "INTEGER NOT NULL DEFAULT 0",
+        "total_spent": "INTEGER NOT NULL DEFAULT 0", "is_active": "BOOLEAN NOT NULL DEFAULT TRUE",
+        "updated_at": "DATETIME",
+    },
+    "import_receipts": {
+        "supplier_id": "INTEGER", "status": "VARCHAR(15) NOT NULL DEFAULT 'confirmed'",
+        "received_at": "DATETIME", "cancelled_at": "DATETIME", "cancel_reason": "VARCHAR(255)",
+    },
+    "import_items": {"serials": "JSON"},
+    "invoices": {
+        "cash_received": "INTEGER", "payment_ref": "VARCHAR(50)",
+        "promo_discount": "INTEGER NOT NULL DEFAULT 0", "points_discount": "INTEGER NOT NULL DEFAULT 0",
+        "vat_amount": "INTEGER NOT NULL DEFAULT 0", "promotion_id": "INTEGER",
+        "points_used": "INTEGER NOT NULL DEFAULT 0", "points_earned": "INTEGER NOT NULL DEFAULT 0",
+        "paid_at": "DATETIME", "cancelled_by": "INTEGER", "cancel_requested_by": "INTEGER",
+        "cancel_requested_at": "DATETIME", "print_count": "INTEGER NOT NULL DEFAULT 0",
+    },
+    "invoice_items": {
+        "serial_id": "INTEGER", "discount_amount": "INTEGER NOT NULL DEFAULT 0",
+        "vat_rate": "INTEGER NOT NULL DEFAULT 10", "vat_amount": "INTEGER NOT NULL DEFAULT 0",
+        "returned_qty": "INTEGER NOT NULL DEFAULT 0", "warranty_months": "INTEGER NOT NULL DEFAULT 12",
+    },
+}
+
+# Chạy một lần khi cột tương ứng vừa được thêm: chuyển dữ liệu cũ sang cách lưu mới.
+DATA_MIGRATIONS = {
+    ("invoices", "paid_at"): [
+        "UPDATE invoices SET paid_at = created_at WHERE status = 'paid' AND paid_at IS NULL",
+        "UPDATE invoices SET payment_method = 'bank_transfer' WHERE payment_method IN ('transfer', 'qr')",
+        "UPDATE invoices SET promo_discount = discount",
+    ],
+    ("customers", "total_spent"): [
+        "UPDATE customers SET total_spent = (SELECT COALESCE(SUM(total), 0) FROM invoices "
+        "WHERE invoices.customer_id = customers.id AND invoices.status = 'paid')",
+    ],
+    ("import_receipts", "received_at"): ["UPDATE import_receipts SET received_at = created_at"],
 }
 
 
@@ -47,6 +101,10 @@ def ensure_schema(bind) -> None:
             for name, ddl in columns.items():
                 if name not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+                    for sql in DATA_MIGRATIONS.get((table, name), []):
+                        conn.execute(text(sql))
+    from app.services.bootstrap import ensure_reference_data
+    ensure_reference_data(bind)
 
 
 def get_db():
