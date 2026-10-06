@@ -20,17 +20,19 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.ai.service import fmt_vnd, mask_phone, strip_accents
 from app.config import settings
-from app.models import (Category, Customer, ImportItem, ImportReceipt, Invoice, InvoiceItem, Product,
+from app.models import (PAID_STATES, Category, Customer, ImportItem, ImportReceipt, Invoice, InvoiceItem, Product,
                         StockMovement, User, now)
 from app.routers.invoices import invoice_query
 from app.services import reports
 
 logger = logging.getLogger("ai")
 
-PAY_VI = {"cash": "Tiền mặt", "transfer": "Chuyển khoản", "card": "Quẹt thẻ", "qr": "Quét mã QR"}
+PAY_VI = {"cash": "Tiền mặt", "bank_transfer": "Chuyển khoản", "card": "Quẹt thẻ"}
+STATUS_VI = {"draft": "nháp", "pending_payment": "chờ thanh toán", "paid": "đã thanh toán",
+             "partially_returned": "đã trả một phần", "fully_returned": "đã trả toàn bộ", "cancelled": "đã hủy"}
 GROUP_VI = {"regular": "Thường", "vip": "VIP", "wholesale": "Khách sỉ"}
-MOVE_VI = {"import": "Nhập hàng", "sale": "Bán hàng", "cancel": "Hủy hóa đơn", "edit": "Sửa hóa đơn",
-           "adjust": "Kiểm kho"}
+MOVE_VI = {"import": "Nhập hàng", "import_cancel": "Hủy phiếu nhập", "sale": "Bán hàng", "cancel": "Hủy hóa đơn",
+           "edit": "Sửa hóa đơn", "return": "Khách trả hàng", "adjust": "Kiểm kho"}
 WEEKDAYS_VI = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"]
 _STOP = {"toi", "can", "mua", "cho", "mot", "cai", "co", "khong", "duoi", "tren", "gia", "khach", "hang",
          "con", "va", "la", "nao", "loai", "muon", "tim", "san", "pham", "the", "nhu", "bao", "nhieu",
@@ -152,7 +154,7 @@ def _period(a: dict) -> tuple[datetime, datetime, dict]:
 
 
 def _paid(start: datetime, end: datetime):
-    return Invoice.status == "paid", Invoice.created_at >= start, Invoice.created_at < end
+    return Invoice.status.in_(PAID_STATES), Invoice.paid_at >= start, Invoice.paid_at < end
 
 
 def _words(text: str) -> set[str]:
@@ -296,20 +298,22 @@ def list_categories(db: Session, user: User, a: dict) -> dict:
 
 
 @tool("find_invoices", "Tra hóa đơn",
-      "Tìm hóa đơn theo mã (VD: HD2605200001), tên / mã khách hàng, khoảng ngày, trạng thái, phương thức thanh toán. "
+      "Tìm hóa đơn theo mã (VD: HD-20261001-0001), tên / mã khách hàng, khoảng ngày, trạng thái, phương thức thanh toán. "
       "Trả về tổng số hóa đơn khớp, tổng tiền đã thanh toán và danh sách chi tiết. "
       "Nhân viên chỉ thấy hóa đơn do chính mình lập.",
       params={
           "keyword": {"type": "STRING", "description": "Mã hóa đơn, tên hoặc mã khách hàng"},
           "date_from": {"type": "STRING", "description": "Từ ngày YYYY-MM-DD (bỏ trống = không giới hạn)"},
           "date_to": {"type": "STRING", "description": "Đến ngày YYYY-MM-DD (bỏ trống = không giới hạn)"},
-          "status": {"type": "STRING", "enum": ["paid", "cancelled"], "description": "paid = đã thanh toán, cancelled = đã hủy"},
+          "status": {"type": "STRING", "enum": ["paid", "cancelled", "pending_payment", "partially_returned", "fully_returned"],
+                     "description": "paid = đã thanh toán, cancelled = đã hủy, pending_payment = chờ chuyển khoản, "
+                                    "partially_returned / fully_returned = khách đã trả một phần / toàn bộ"},
           "payment_method": {"type": "STRING", "enum": list(PAY_VI), "description": "Phương thức thanh toán"},
           "order": {"type": "STRING", "enum": ["newest", "largest"], "description": "Mới nhất hoặc giá trị lớn nhất"},
           "limit": {"type": "INTEGER", "description": "Số hóa đơn trả về (1-10), mặc định 5"},
       })
 def find_invoices(db: Session, user: User, a: dict) -> dict:
-    status = _enum(a, "status", ("paid", "cancelled"), "") or None
+    status = _enum(a, "status", ("paid", "cancelled", "pending_payment", "partially_returned", "fully_returned"), "") or None
     method = _enum(a, "payment_method", tuple(PAY_VI), "") or None
     order = _enum(a, "order", ("newest", "largest"), "newest")
     limit = _int(a, "limit", 5, 1, 10)
@@ -318,7 +322,7 @@ def find_invoices(db: Session, user: User, a: dict) -> dict:
                          d_to and d_to.isoformat(), method, None)
     count = db.scalar(select(func.count()).select_from(stmt.subquery()))
     sum_paid = db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(
-        Invoice.id.in_(stmt.with_only_columns(Invoice.id).where(Invoice.status == "paid"))))
+        Invoice.id.in_(stmt.with_only_columns(Invoice.id).where(Invoice.status.in_(PAID_STATES)))))
     sort = (Invoice.total.desc(),) if order == "largest" else (Invoice.created_at.desc(), Invoice.id.desc())
     rows = db.scalars(stmt.options(joinedload(Invoice.customer), joinedload(Invoice.user),
                                    selectinload(Invoice.items).joinedload(InvoiceItem.product))
@@ -332,7 +336,7 @@ def find_invoices(db: Session, user: User, a: dict) -> dict:
             "customer_code": inv.customer.code if inv.customer else None,
             "staff": inv.user.full_name, "subtotal": inv.subtotal, "discount": inv.discount, "total": inv.total,
             "payment_method": PAY_VI.get(inv.payment_method, inv.payment_method),
-            "status": "đã thanh toán" if inv.status == "paid" else "đã hủy",
+            "status": STATUS_VI.get(inv.status, inv.status),
             "cancel_reason": inv.cancel_reason,
             "items": [f"{it.product.name} ({it.product.code}) x{it.quantity} = {fmt_vnd(it.line_total)}" for it in inv.items],
         } for inv in rows],
@@ -361,7 +365,7 @@ def find_customers(db: Session, user: User, a: dict) -> dict:
     customers = db.scalars(stmt.order_by(Customer.id.desc()).limit(limit)).all()
     stats = {cid: (n, spent, last) for cid, n, spent, last in db.execute(
         select(Invoice.customer_id, func.count(Invoice.id), func.sum(Invoice.total), func.max(Invoice.created_at))
-        .where(Invoice.status == "paid", Invoice.customer_id.in_([c.id for c in customers]))
+        .where(Invoice.status.in_(PAID_STATES), Invoice.customer_id.in_([c.id for c in customers]))
         .group_by(Invoice.customer_id))}
     out = []
     for c in customers:

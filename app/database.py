@@ -74,6 +74,7 @@ ADDED_COLUMNS = {
         "serial_id": "INTEGER", "discount_amount": "INTEGER NOT NULL DEFAULT 0",
         "vat_rate": "INTEGER NOT NULL DEFAULT 10", "vat_amount": "INTEGER NOT NULL DEFAULT 0",
         "returned_qty": "INTEGER NOT NULL DEFAULT 0", "warranty_months": "INTEGER NOT NULL DEFAULT 12",
+        "promotion_id": "INTEGER",
     },
 }
 

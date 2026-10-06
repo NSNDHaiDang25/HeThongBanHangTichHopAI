@@ -148,7 +148,7 @@ def _used(*names: str) -> list[dict]:
 def _help_text(user: User) -> str:
     lines = ["Trợ lý đang ở **chế độ dự phòng** nên chỉ hiểu một số câu hỏi cơ bản, ví dụ:",
              "- Tìm sản phẩm: *\"tai nghe dưới 500k\"*, *\"PK001 còn hàng không\"*",
-             "- Tra hóa đơn theo mã: *\"HD2605200001\"*",
+             "- Tra hóa đơn theo mã: *\"HD-20261001-0001\"*",
              "- Hướng dẫn: *\"làm sao để hủy hóa đơn\"*"]
     if tools.is_manager(user):
         lines.append("- Số liệu: *\"doanh thu tháng này\"*, *\"mặt hàng bán chạy\"*, *\"sản phẩm sắp hết\"*, "
@@ -193,9 +193,12 @@ def fallback(db: Session, user: User, message: str) -> dict:
     manager = tools.is_manager(user)
     base = {"suggestions": [], "tools": []}
 
-    m = re.search(r"\bhd\d{6,}\b", q)
+    m = re.search(r"\bhd-?\d{8}-?\d{3,}\b|\bhd\d{6,}\b", q)  # HD-20261001-0001 (mới) hoặc HD2605200001 (cũ)
     if m:
-        return {**base, **_invoice_answer(db, user, m.group(0).upper())}
+        code = m.group(0).upper()
+        if "-" not in code and len(code) == 14:
+            code = f"{code[:2]}-{code[2:10]}-{code[10:]}"
+        return {**base, **_invoice_answer(db, user, code)}
 
     if any(h in q for h in _GUIDE_HINTS):
         res = tools.run(db, user, "app_guide", {"topic": message})

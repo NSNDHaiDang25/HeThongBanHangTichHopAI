@@ -15,7 +15,7 @@ def test_revenue_excludes_cancelled_invoices(client, owner_h):
     sell(client, owner_h, [{"product_id": pk1, "quantity": 2}], discount=50_000)  # 650.000
     sell(client, owner_h, [{"product_id": pk3, "quantity": 3}])                   # 570.000
     c = sell(client, owner_h, [{"product_id": pk1, "quantity": 1}])
-    client.post(f"/api/invoices/{c['id']}/cancel", json={"reason": "x"}, headers=owner_h)
+    client.post(f"/api/invoices/{c['id']}/cancel", json={"reason": "Lập sai hóa đơn"}, headers=owner_h)
 
     today = date.today().isoformat()
     data = client.get("/api/reports/revenue", params={"date_from": today, "date_to": today}, headers=owner_h).json()
@@ -24,7 +24,9 @@ def test_revenue_excludes_cancelled_invoices(client, owner_h):
     assert s["revenue"] == 1_220_000
     assert s["discount"] == 50_000
     assert s["cost"] == 2 * 220_000 + 3 * 95_000
-    assert s["gross_profit"] == 1_220_000 - 725_000
+    # FR-RPT-05: lãi gộp = doanh thu chưa VAT - giá vốn. VAT 10% đã gồm trong giá: 59.091 + 51.818
+    assert s["vat"] == 59_091 + 51_818 and s["revenue_net"] == 1_220_000 - 110_909
+    assert s["gross_profit"] == 1_220_000 - 110_909 - 725_000
     assert data["by_day"] == [{"date": today, "revenue": 1_220_000, "invoice_count": 2}]
 
 

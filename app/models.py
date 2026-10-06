@@ -360,6 +360,7 @@ class InvoiceItem(Base):
     vat_amount: Mapped[int] = mapped_column(Integer, default=0)
     returned_qty: Mapped[int] = mapped_column(Integer, default=0)
     warranty_months: Mapped[int] = mapped_column(Integer, default=12)
+    promotion_id: Mapped[int | None] = mapped_column(ForeignKey("promotions.id"))  # khuyến mãi cấp dòng đã áp
     invoice: Mapped[Invoice] = relationship(back_populates="items")
     product: Mapped[Product] = relationship()
     serial: Mapped[ProductSerial | None] = relationship(foreign_keys=[serial_id])

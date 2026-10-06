@@ -1,8 +1,11 @@
 from tests.helpers import product_id
 
 
+_phones = iter(f"09{n:08d}" for n in range(10_000_000, 99_999_999))
+
+
 def new_customer(client, h, **kw):
-    r = client.post("/api/customers", json={"name": "Khách thử", **kw}, headers=h)
+    r = client.post("/api/customers", json={"name": "Khách thử", "phone": next(_phones), **kw}, headers=h)
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -51,4 +54,4 @@ def test_valid_phone_is_normalized(client, owner_h):
     assert r.status_code in (200, 201)
     assert r.json()["phone"] == "0912345678"
     r = client.post("/api/customers", json={"name": "Không SĐT", "phone": ""}, headers=owner_h)
-    assert r.status_code in (200, 201) and r.json()["phone"] is None
+    assert r.status_code == 422  # FR-CUS-02: số điện thoại bắt buộc

@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -251,20 +251,29 @@ class SerialUpdateIn(BaseModel):
 class CustomerIn(BaseModel):
     code: str | None = Field(default=None, max_length=30)
     name: str = Field(min_length=1, max_length=100)
-    phone: str | None = Field(default=None, max_length=20)
-    email: str | None = None
-    address: str | None = None
+    phone: str = Field(max_length=20)  # FR-CUS-02: bắt buộc, hợp lệ và duy nhất
+    email: Annotated[str | None, AfterValidator(normalize_email)] = None
+    address: str | None = Field(default=None, max_length=255)
+    birthday: date | None = None
     group: CustomerGroup = "regular"
-    note: str | None = None
+    note: str | None = Field(default=None, max_length=255)
+    is_active: bool | None = None  # chỉ chủ cửa hàng đổi được (FR-CUS-06)
 
     @field_validator("phone")
     @classmethod
-    def phone_digits(cls, v: str | None):
-        if v:
-            v = re.sub(r"[\s.\-]", "", v)
-            if not re.fullmatch(r"0\d{9}", v):
-                raise ValueError("Số điện thoại phải gồm 10 chữ số, bắt đầu bằng 0")
-        return v or None
+    def phone_digits(cls, v: str):
+        v = normalize_phone(v)
+        if not v:
+            raise ValueError("Vui lòng nhập số điện thoại khách hàng")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, v: str):
+        v = " ".join(v.split())
+        if not v:
+            raise ValueError("Vui lòng nhập họ tên khách hàng")
+        return v
 
 
 class CustomerOut(ORM):
@@ -274,31 +283,115 @@ class CustomerOut(ORM):
     phone: str | None
     email: str | None
     address: str | None
+    birthday: date | None = None
     group: str
     note: str | None
+    tier_id: int | None = None
+    loyalty_points: int = 0
+    total_spent: int = 0
+    is_active: bool = True
     created_at: datetime
+
+
+class PointsAdjustIn(BaseModel):
+    points: int = Field(ge=-1_000_000, le=1_000_000)  # dương = cộng, âm = trừ
+    reason: Reason
+
+    @field_validator("points")
+    @classmethod
+    def not_zero(cls, v: int):
+        if v == 0:
+            raise ValueError("Số điểm điều chỉnh phải khác 0")
+        return v
+
+
+# ---------- Khuyến mãi ----------
+class PromotionIn(BaseModel):
+    code: str | None = Field(default=None, max_length=30)  # có mã => voucher phải nhập; trống => tự động áp dụng
+    name: str = Field(min_length=1, max_length=150)
+    promo_type: Literal["percent", "fixed_amount"]
+    scope: Literal["product", "category", "invoice"]
+    target_id: int | None = None
+    discount_value: int = Field(gt=0, le=2_000_000_000)
+    max_discount: int | None = Field(default=None, gt=0, le=2_000_000_000)
+    min_invoice_amount: int = Field(default=0, ge=0, le=2_000_000_000)
+    usage_limit: int | None = Field(default=None, gt=0)
+    start_at: datetime
+    end_at: datetime
+    status: Literal["active", "paused"] = "active"
+
+    @field_validator("code")
+    @classmethod
+    def code_upper(cls, v: str | None):
+        v = (v or "").strip().upper()
+        if v and not re.fullmatch(r"[A-Z0-9_\-]{3,30}", v):
+            raise ValueError("Mã voucher gồm 3-30 ký tự chữ in hoa, số, gạch ngang")
+        return v or None
+
+    @model_validator(mode="after")
+    def check(self):
+        if self.end_at <= self.start_at:
+            raise ValueError("Thời gian kết thúc phải sau thời gian bắt đầu")
+        if self.promo_type == "percent" and self.discount_value > 100:
+            raise ValueError("Khuyến mãi phần trăm tối đa 100%")
+        if self.scope != "invoice" and self.target_id is None:
+            raise ValueError("Khuyến mãi theo sản phẩm hoặc nhóm hàng cần chọn đối tượng áp dụng")
+        if self.scope == "invoice":
+            self.target_id = None
+        return self
+
+
+class PromotionStatusIn(BaseModel):
+    status: Literal["active", "paused"]
+
+
+class ValidateCodeIn(BaseModel):
+    code: str = Field(min_length=1, max_length=30)
+    items: list["InvoiceItemIn"] = Field(default_factory=list)
+    customer_id: int | None = None
 
 
 # ---------- Invoice ----------
 class InvoiceItemIn(BaseModel):
     product_id: int
-    quantity: int = Field(gt=0)
-    unit_price: int | None = Field(default=None, ge=0)  # bỏ trống => lấy giá bán hiện tại
+    quantity: int = Field(gt=0, le=9999)
+    unit_price: int | None = Field(default=None, ge=0)  # bỏ trống => giá bán niêm yết; nhân viên không được đặt giá
+    serial_id: int | None = None  # sản phẩm theo serial: chọn đúng máy bán (FR-SAL-04)
+    serial_no: str | None = Field(default=None, max_length=50)
 
 
 class InvoiceIn(BaseModel):
     customer_id: int | None = None
     items: list[InvoiceItemIn] = Field(min_length=1)
-    discount: int = Field(default=0, ge=0)
+    promo_code: str | None = Field(default=None, max_length=30)  # voucher
+    points_used: int = Field(default=0, ge=0)
+    discount: int = Field(default=0, ge=0)  # giảm tay (bản cũ), cộng vào giảm giá khuyến mãi
     discount_percent: float | None = Field(default=None, ge=0, le=100)
     payment_method: PaymentMethod = "cash"
-    cash_received: int | None = Field(default=None, ge=0)  # chỉ dùng với tiền mặt
+    cash_received: int | None = Field(default=None, ge=0, le=2_000_000_000)  # chỉ dùng với tiền mặt
     payment_ref: str | None = Field(default=None, max_length=50)  # nội dung CK / mã giao dịch POS
-    note: str | None = None
+    payment_confirmed: bool = False  # chuyển khoản: nhân viên đã thấy tiền về, chốt paid ngay
+    note: str | None = Field(default=None, max_length=255)
+    draft_id: int | None = None  # chốt từ hóa đơn nháp đã lưu
 
 
 class InvoiceCancelIn(BaseModel):
-    reason: str = Field(min_length=1, max_length=255)
+    reason: Reason
+
+
+class CancelDecisionIn(BaseModel):
+    approve: bool
+    note: str | None = Field(default=None, max_length=255)
+
+
+class ConfirmPaymentIn(BaseModel):
+    payment_method: PaymentMethod | None = None  # đổi phương thức khi còn chờ thanh toán (FR-PAY-06)
+    payment_ref: str | None = Field(default=None, max_length=50)
+    cash_received: int | None = Field(default=None, ge=0, le=2_000_000_000)
+
+
+class EmailInvoiceIn(BaseModel):
+    email: Annotated[str | None, AfterValidator(normalize_email)] = None  # bỏ trống => email của khách
 
 
 class InvoiceItemOut(ORM):
@@ -438,3 +531,6 @@ class TierIn(BaseModel):
 
 class TiersIn(BaseModel):
     tiers: list[TierIn] = Field(min_length=1)
+
+
+ValidateCodeIn.model_rebuild()

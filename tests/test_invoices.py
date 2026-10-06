@@ -9,14 +9,14 @@ def make_invoice(client, h, items, **extra):
 def test_create_invoice_calculates_total_and_reduces_stock(client, staff_h):
     pk1, pk3 = product_id(client, staff_h, "PK001"), product_id(client, staff_h, "PK003")
     r = make_invoice(client, staff_h, [{"product_id": pk1, "quantity": 2}, {"product_id": pk3, "quantity": 1}],
-                     discount=30_000, payment_method="transfer")
+                     discount=30_000, payment_method="transfer")  # "transfer": tên cũ, đã xác nhận tại quầy
     assert r.status_code == 201, r.text
     inv = r.json()
     assert inv["subtotal"] == 2 * 350_000 + 190_000
     assert inv["discount"] == 30_000
     assert inv["total"] == 860_000
-    assert inv["payment_method"] == "transfer"
-    assert inv["code"].startswith("HD")
+    assert inv["payment_method"] == "bank_transfer" and inv["status"] == "paid"
+    assert inv["code"].startswith("HD-") and inv["code"].endswith("-0001")  # BR-23: HD-yyyyMMdd-nnnn
     assert stock_of(client, staff_h, "PK001") == 10
     assert stock_of(client, staff_h, "PK003") == 49
 
@@ -60,11 +60,28 @@ def test_invalid_quantity_rejected(client, staff_h):
     assert make_invoice(client, staff_h, []).status_code == 422
 
 
-def test_staff_cannot_cancel_invoice(client, staff_h):
+def test_staff_cancel_of_paid_invoice_needs_owner_approval(client, staff_h, owner_h):
+    """FR-SAL-10: nhân viên gửi yêu cầu hủy hóa đơn đã thanh toán, chủ cửa hàng duyệt."""
     pk1 = product_id(client, staff_h, "PK001")
     inv = make_invoice(client, staff_h, [{"product_id": pk1, "quantity": 1}]).json()
-    r = client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "test"}, headers=staff_h)
-    assert r.status_code == 403
+    assert client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "sai"}, headers=staff_h).status_code == 422
+    r = client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "Bấm nhầm sản phẩm"}, headers=staff_h)
+    assert r.status_code == 200 and r.json()["status"] == "paid" and r.json()["cancel_requested_at"]
+    assert stock_of(client, staff_h, "PK001") == 11
+    assert client.get("/api/invoices", params={"cancel_requested": True}, headers=owner_h).json()["total"] == 1
+    assert client.post(f"/api/invoices/{inv['id']}/cancel/approve", json={"approve": True},
+                       headers=staff_h).status_code == 403
+    r = client.post(f"/api/invoices/{inv['id']}/cancel/approve", json={"approve": True}, headers=owner_h)
+    assert r.json()["status"] == "cancelled" and r.json()["cancel_reason"] == "Bấm nhầm sản phẩm"
+    assert stock_of(client, staff_h, "PK001") == 12
+
+
+def test_owner_can_reject_cancel_request(client, staff_h, owner_h):
+    pk1 = product_id(client, staff_h, "PK001")
+    inv = make_invoice(client, staff_h, [{"product_id": pk1, "quantity": 1}]).json()
+    client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "Bấm nhầm sản phẩm"}, headers=staff_h)
+    r = client.post(f"/api/invoices/{inv['id']}/cancel/approve", json={"approve": False}, headers=owner_h)
+    assert r.json()["status"] == "paid" and r.json()["cancel_requested_at"] is None
 
 
 def test_staff_only_sees_own_invoices(client, staff_h, owner_h):
@@ -90,7 +107,7 @@ def test_filter_invoices_by_status(client, owner_h):
     pk1 = product_id(client, owner_h, "PK001")
     a = make_invoice(client, owner_h, [{"product_id": pk1, "quantity": 1}]).json()
     make_invoice(client, owner_h, [{"product_id": pk1, "quantity": 1}])
-    client.post(f"/api/invoices/{a['id']}/cancel", json={"reason": "x"}, headers=owner_h)
+    client.post(f"/api/invoices/{a['id']}/cancel", json={"reason": "Lập sai hóa đơn"}, headers=owner_h)
     assert client.get("/api/invoices", params={"status": "cancelled"}, headers=owner_h).json()["total"] == 1
     assert client.get("/api/invoices", params={"status": "paid"}, headers=owner_h).json()["total"] == 1
 

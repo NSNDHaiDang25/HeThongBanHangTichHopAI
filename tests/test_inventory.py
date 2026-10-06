@@ -2,10 +2,17 @@
 from tests.helpers import product_id, stock_of
 
 
-def sell(client, h, pid, qty):
-    r = client.post("/api/invoices", json={"items": [{"product_id": pid, "quantity": qty}]}, headers=h)
+def sell(client, h, pid, qty, **extra):
+    r = client.post("/api/invoices", json={"items": [{"product_id": pid, "quantity": qty}], **extra}, headers=h)
     assert r.status_code == 201, r.text
     return r.json()
+
+
+def sell_pending(client, h, pid, qty):
+    """Hóa đơn chuyển khoản chờ xác nhận: còn sửa được (BR-24)."""
+    inv = sell(client, h, pid, qty, payment_method="bank_transfer")
+    assert inv["status"] == "pending_payment"
+    return inv
 
 
 def test_import_increases_stock_and_updates_cost(client, owner_h):
@@ -81,18 +88,20 @@ def test_cancel_invoice_restores_stock(client, owner_h):
 def test_cancel_twice_does_not_double_restore(client, owner_h):
     pk1 = product_id(client, owner_h, "PK001")
     inv = sell(client, owner_h, pk1, 5)
-    client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "x"}, headers=owner_h)
-    r = client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "x"}, headers=owner_h)
+    client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "Lập sai hóa đơn"}, headers=owner_h)
+    r = client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "Lập sai hóa đơn"}, headers=owner_h)
     assert r.status_code == 400
     assert stock_of(client, owner_h, "PK001") == 12
 
 
 def test_edit_invoice_adjusts_stock_by_difference(client, owner_h):
     pk1, pk3 = product_id(client, owner_h, "PK001"), product_id(client, owner_h, "PK003")
-    inv = sell(client, owner_h, pk1, 5)  # PK001: 12 -> 7
+    inv = sell_pending(client, owner_h, pk1, 5)  # PK001: 12 -> 7
     r = client.put(f"/api/invoices/{inv['id']}", json={"items": [
-        {"product_id": pk1, "quantity": 2}, {"product_id": pk3, "quantity": 3}]}, headers=owner_h)
+        {"product_id": pk1, "quantity": 2}, {"product_id": pk3, "quantity": 3}], "payment_method": "bank_transfer"},
+        headers=owner_h)
     assert r.status_code == 200, r.text
+    assert r.json()["code"] == inv["code"] and r.json()["status"] == "pending_payment"
     assert r.json()["total"] == 2 * 350_000 + 3 * 190_000
     assert stock_of(client, owner_h, "PK001") == 10
     assert stock_of(client, owner_h, "PK003") == 47
@@ -101,16 +110,16 @@ def test_edit_invoice_adjusts_stock_by_difference(client, owner_h):
 def test_edit_invoice_can_reuse_its_own_stock(client, owner_h):
     """Hóa đơn đang giữ 12 cái (hết kho); sửa thành 12 cái vẫn hợp lệ vì hàng cũ được hoàn trước."""
     pk1 = product_id(client, owner_h, "PK001")
-    inv = sell(client, owner_h, pk1, 12)
-    r = client.put(f"/api/invoices/{inv['id']}", json={"items": [{"product_id": pk1, "quantity": 12}]},
-                   headers=owner_h)
+    inv = sell_pending(client, owner_h, pk1, 12)
+    r = client.put(f"/api/invoices/{inv['id']}", json={"items": [{"product_id": pk1, "quantity": 12}],
+                                                       "payment_method": "bank_transfer"}, headers=owner_h)
     assert r.status_code == 200
     assert stock_of(client, owner_h, "PK001") == 0
 
 
 def test_failed_edit_rolls_back_stock(client, owner_h):
     pk1 = product_id(client, owner_h, "PK001")
-    inv = sell(client, owner_h, pk1, 5)  # còn 7
+    inv = sell_pending(client, owner_h, pk1, 5)  # còn 7
     r = client.put(f"/api/invoices/{inv['id']}", json={"items": [{"product_id": pk1, "quantity": 50}]},
                    headers=owner_h)
     assert r.status_code == 400
@@ -122,16 +131,25 @@ def test_failed_edit_rolls_back_stock(client, owner_h):
 def test_cannot_edit_cancelled_invoice(client, owner_h):
     pk1 = product_id(client, owner_h, "PK001")
     inv = sell(client, owner_h, pk1, 1)
-    client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "x"}, headers=owner_h)
+    client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "Lập sai hóa đơn"}, headers=owner_h)
     r = client.put(f"/api/invoices/{inv['id']}", json={"items": [{"product_id": pk1, "quantity": 1}]},
                    headers=owner_h)
     assert r.status_code == 400
 
 
+def test_cannot_edit_paid_invoice(client, owner_h):
+    """BR-24: hóa đơn đã thanh toán không sửa nội dung."""
+    pk1 = product_id(client, owner_h, "PK001")
+    inv = sell(client, owner_h, pk1, 1)
+    r = client.put(f"/api/invoices/{inv['id']}", json={"items": [{"product_id": pk1, "quantity": 2}]},
+                   headers=owner_h)
+    assert r.status_code == 400 and "BR-24" in r.json()["detail"]
+
+
 def test_stock_movements_logged(client, owner_h):
     pk1 = product_id(client, owner_h, "PK001")
     inv = sell(client, owner_h, pk1, 3)
-    client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "x"}, headers=owner_h)
+    client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "Lập sai hóa đơn"}, headers=owner_h)
     moves = client.get("/api/stock-movements", params={"product_id": pk1}, headers=owner_h).json()["items"]
     assert [(m["type"], m["change"], m["stock_after"]) for m in moves] == [("cancel", 3, 12), ("sale", -3, 9)]
 

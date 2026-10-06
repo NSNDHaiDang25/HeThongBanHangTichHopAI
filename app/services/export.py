@@ -9,7 +9,9 @@ from openpyxl.styles import Font, PatternFill
 
 from app.ai.service import strip_accents
 
+FONT_DIR = Path(__file__).resolve().parent.parent / "fonts"
 FONT_CANDIDATES = [
+    FONT_DIR / "DejaVuSans.ttf",  # kèm trong mã nguồn (giấy phép tự do, xem LICENSE-DejaVu.txt)
     Path("C:/Windows/Fonts/arial.ttf"),
     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     Path("/usr/share/fonts/dejavu/DejaVuSans.ttf"),

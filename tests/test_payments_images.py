@@ -37,7 +37,7 @@ def test_cash_less_than_total_rejected(client, staff_h):
 @pytest.mark.parametrize("method,ref", [("card", "POS123456"), ("transfer", "SALESAI 2609231200"), ("qr", "SALESAI 2609231201")])
 def test_non_cash_methods_store_reference(client, staff_h, method, ref):
     inv = sell(client, staff_h, payment_method=method, payment_ref=ref, cash_received=999_999).json()
-    assert inv["payment_method"] == method
+    assert inv["payment_method"] == ("card" if method == "card" else "bank_transfer")  # transfer, qr: tên cũ
     assert inv["payment_ref"] == ref
     assert inv["cash_received"] is None  # tiền khách đưa chỉ áp dụng cho tiền mặt
 

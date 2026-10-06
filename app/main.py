@@ -7,7 +7,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import engine, ensure_schema
-from app.routers import ai, auth, catalog, customers, invoices, loyalty, payments, purchasing, reports, system
+from app.routers import (ai, auth, catalog, customers, invoices, loyalty, payments, promotions, purchasing, reports,
+                         system)
 from app.services.audit import client_ip
 
 logging.basicConfig(level=logging.INFO)
@@ -42,7 +43,7 @@ async def value_error_handler(_: Request, exc: ValueError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
-for r in (auth, catalog, customers, invoices, loyalty, payments, purchasing, reports, ai, system):
+for r in (auth, catalog, customers, invoices, loyalty, payments, promotions, purchasing, reports, ai, system):
     app.include_router(r.router)
 
 
