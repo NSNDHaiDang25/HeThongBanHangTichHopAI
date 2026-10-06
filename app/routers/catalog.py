@@ -10,10 +10,14 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
 from app.database import get_db
-from app.models import Category, ImportItem, InvoiceItem, Product, StockMovement, User
-from app.schemas import CategoryIn, CategoryOut, ProductIn, ProductOut, ProductUpdate, StockAdjustIn
+from app.ai.service import strip_accents
+from app.models import Category, ImportItem, InvoiceItem, Product, ProductSerial, StockMovement, User
+from app.schemas import (CategoryIn, CategoryOut, ProductIn, ProductOut, ProductUpdate, SerialUpdateIn,
+                         StockAdjustIn)
 from app.security import ALL_STAFF, MANAGERS
+from app.services import app_settings, audit
 from app.services.inventory import BusinessError, adjust_stock, change_stock
+from app.services.purchasing import clean_serial
 from app.services.qr import qr_svg
 
 router = APIRouter(prefix="/api", tags=["catalog"])
@@ -21,13 +25,26 @@ router = APIRouter(prefix="/api", tags=["catalog"])
 
 # ---------------- Danh mục ----------------
 @router.get("/categories", response_model=list[CategoryOut])
-def list_categories(db: Session = Depends(get_db), _: User = Depends(ALL_STAFF)):
-    return db.scalars(select(Category).order_by(Category.name)).all()
+def list_categories(active_only: bool = False, db: Session = Depends(get_db), _: User = Depends(ALL_STAFF)):
+    stmt = select(Category).order_by(Category.name)
+    if active_only:
+        stmt = stmt.where(Category.is_active.is_(True))
+    return db.scalars(stmt).all()
+
+
+def _category_values(db: Session, data: CategoryIn) -> dict:
+    values = data.model_dump()
+    defaults = app_settings.get_many(db, ["vat_rate_default", "warranty_months_default"])
+    if values["default_vat_rate"] is None:
+        values["default_vat_rate"] = defaults["vat_rate_default"]
+    if values["default_warranty_months"] is None:
+        values["default_warranty_months"] = defaults["warranty_months_default"]
+    return values
 
 
 @router.post("/categories", response_model=CategoryOut, status_code=201)
 def create_category(data: CategoryIn, db: Session = Depends(get_db), _: User = Depends(MANAGERS)):
-    cat = Category(**data.model_dump())
+    cat = Category(**_category_values(db, data))
     db.add(cat)
     try:
         db.commit()
@@ -42,7 +59,8 @@ def update_category(cat_id: int, data: CategoryIn, db: Session = Depends(get_db)
     cat = db.get(Category, cat_id)
     if cat is None:
         raise HTTPException(404, "Không tìm thấy nhóm hàng")
-    cat.name, cat.description = data.name, data.description
+    for k, v in _category_values(db, data).items():
+        setattr(cat, k, v)
     try:
         db.commit()
     except IntegrityError:
@@ -53,37 +71,51 @@ def update_category(cat_id: int, data: CategoryIn, db: Session = Depends(get_db)
 
 @router.delete("/categories/{cat_id}")
 def delete_category(cat_id: int, db: Session = Depends(get_db), _: User = Depends(MANAGERS)):
+    """FR-CAT-03: nhóm đã có sản phẩm thì không xóa được, chỉ ẩn."""
     cat = db.get(Category, cat_id)
     if cat is None:
         raise HTTPException(404, "Không tìm thấy nhóm hàng")
     if db.scalar(select(func.count(Product.id)).where(Product.category_id == cat_id)):
-        raise HTTPException(400, "Nhóm hàng đang có sản phẩm, không thể xóa")
+        raise HTTPException(400, "Nhóm hàng đang có sản phẩm, không thể xóa. Hãy ẩn nhóm hàng thay vì xóa")
     db.delete(cat)
     db.commit()
     return {"ok": True}
 
 
 # ---------------- Sản phẩm ----------------
+def stock_state(p: Product, threshold: int | None = None) -> str:
+    """FR-PRD-07: Hết hàng khi tồn bằng 0, Sắp hết hàng khi tồn nhỏ hơn ngưỡng của sản phẩm (mặc định 5)."""
+    if p.stock <= 0:
+        return "out"
+    return "low" if p.stock < (p.min_stock if threshold is None else threshold) else "in"
+
+
 def product_out(p: Product, user: User) -> dict:
     data = ProductOut.model_validate(p).model_dump()
     data["category_name"] = p.category.name if p.category else None
+    data["stock_state"] = stock_state(p)
     if user.role == "staff":
-        data["cost_price"] = None  # nhân viên bán hàng không xem giá nhập
+        data["cost_price"] = None  # nhân viên bán hàng không xem giá nhập (FR-PRD-08)
     return data
+
+
+def _matches(p: Product, words: list[str]) -> bool:
+    hay = strip_accents(f"{p.code} {p.barcode or ''} {p.name} {p.brand or ''}")
+    return all(w in hay for w in words)
 
 
 @router.get("/products")
 def list_products(
     q: str | None = None, category_id: int | None = None,
-    status: str | None = Query(None, pattern="^(active|inactive)$"),
+    status: str | None = Query(None, pattern="^(active|inactive|discontinued)$"),
     stock: str | None = Query(None, pattern="^(in|out|low)$"),
+    min_price: int | None = Query(None, ge=0), max_price: int | None = Query(None, ge=0),
+    track_serial: bool | None = None,
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=200),
     db: Session = Depends(get_db), user: User = Depends(ALL_STAFF),
 ):
+    """FR-PRD-06: tìm theo SKU, mã vạch, tên không phân biệt dấu; lọc nhóm, khoảng giá, trạng thái, tình trạng tồn."""
     stmt = select(Product).options(joinedload(Product.category))
-    if q:
-        like = f"%{q.strip()}%"
-        stmt = stmt.where(or_(Product.name.ilike(like), Product.code.ilike(like)))
     if category_id:
         stmt = stmt.where(Product.category_id == category_id)
     if status:
@@ -91,21 +123,49 @@ def list_products(
     if stock == "in":
         stmt = stmt.where(Product.stock > 0)
     elif stock == "out":
-        stmt = stmt.where(Product.stock == 0)
+        stmt = stmt.where(Product.stock <= 0)
     elif stock == "low":
-        stmt = stmt.where(Product.stock <= Product.min_stock)
-    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
-    rows = db.scalars(stmt.order_by(Product.code).offset((page - 1) * size).limit(size)).all()
+        stmt = stmt.where(Product.stock < Product.min_stock)
+    if min_price is not None:
+        stmt = stmt.where(Product.sale_price >= min_price)
+    if max_price is not None:
+        stmt = stmt.where(Product.sale_price <= max_price)
+    if track_serial is not None:
+        stmt = stmt.where(Product.track_serial.is_(track_serial))
+    stmt = stmt.order_by(Product.code)
+    if q and q.strip():
+        # Lọc bằng Python vì LIKE của SQLite không bỏ dấu tiếng Việt ("tai nghe" phải khớp "Tai nghe", "tai nghé")
+        words = strip_accents(q).split()
+        rows = [p for p in db.scalars(stmt).unique() if _matches(p, words)]
+        total = len(rows)
+        rows = rows[(page - 1) * size: page * size]
+    else:
+        total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+        rows = db.scalars(stmt.offset((page - 1) * size).limit(size)).unique().all()
     return {"items": [product_out(p, user) for p in rows], "total": total, "page": page, "size": size}
 
 
 @router.get("/products/by-code/{code}")
 def get_product_by_code(code: str, db: Session = Depends(get_db), user: User = Depends(ALL_STAFF)):
-    """Tra sản phẩm theo mã, dùng khi quét QR / mã vạch ở màn hình bán hàng."""
-    p = db.scalar(select(Product).where(func.upper(Product.code) == code.strip().upper()))
+    """Tra sản phẩm theo SKU, mã vạch hoặc serial, dùng khi quét mã ở màn hình bán hàng (FR-SAL-01)."""
+    key = code.strip()
+    p = db.scalar(select(Product).where(func.upper(Product.code) == key.upper())) \
+        or db.scalar(select(Product).where(Product.barcode == key))
+    serial = None
     if p is None:
-        raise HTTPException(404, f"Không tìm thấy sản phẩm có mã '{code.strip()}'")
-    return product_out(p, user)
+        serial = db.scalar(select(ProductSerial).where(ProductSerial.serial_no == key.upper()))
+        p = serial.product if serial else None
+    if p is None:
+        raise HTTPException(404, f"Không tìm thấy sản phẩm có mã '{key}'")
+    out = product_out(p, user)
+    if serial is not None:
+        out["serial"] = {"id": serial.id, "serial_no": serial.serial_no, "status": serial.status}
+    return out
+
+
+@router.get("/products/barcode/{code}")
+def get_product_by_barcode(code: str, db: Session = Depends(get_db), user: User = Depends(ALL_STAFF)):
+    return get_product_by_code(code, db, user)
 
 
 @router.get("/products/qr-labels")
@@ -144,6 +204,15 @@ def _category_id_by_name(db: Session, name: str) -> int | None:
     return cat.id
 
 
+def _apply_category_defaults(db: Session, fields: dict) -> None:
+    cat = db.get(Category, fields["category_id"]) if fields.get("category_id") else None
+    defaults = app_settings.get_many(db, ["vat_rate_default", "warranty_months_default"])
+    if fields.get("vat_rate") is None:
+        fields["vat_rate"] = cat.default_vat_rate if cat else defaults["vat_rate_default"]  # BR-04
+    if fields.get("warranty_months") is None:
+        fields["warranty_months"] = cat.default_warranty_months if cat else defaults["warranty_months_default"]
+
+
 @router.post("/products", status_code=201)
 def create_product(data: ProductIn, db: Session = Depends(get_db), user: User = Depends(MANAGERS)):
     fields = data.model_dump(exclude={"stock", "category_name"})
@@ -151,6 +220,9 @@ def create_product(data: ProductIn, db: Session = Depends(get_db), user: User = 
         fields["category_id"] = _category_id_by_name(db, data.category_name)
     elif data.category_id and db.get(Category, data.category_id) is None:
         raise HTTPException(400, "Nhóm hàng không tồn tại")
+    if data.track_serial and data.stock:
+        raise HTTPException(400, "Sản phẩm quản lý theo serial: tồn kho được tạo khi nhập hàng kèm serial")
+    _apply_category_defaults(db, fields)
     initial_stock = data.stock
     p = Product(**fields, stock=0)
     db.add(p)
@@ -158,7 +230,7 @@ def create_product(data: ProductIn, db: Session = Depends(get_db), user: User = 
         db.flush()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(400, "Mã sản phẩm đã tồn tại")
+        raise HTTPException(400, "Mã sản phẩm hoặc mã vạch đã tồn tại")
     if initial_stock:
         change_stock(db, p, initial_stock, "adjust", None, user, note="Tồn kho đầu kỳ")
     db.commit()
@@ -177,13 +249,25 @@ def update_product(product_id: int, data: ProductUpdate, db: Session = Depends(g
         changes["category_id"] = _category_id_by_name(db, changes.pop("category_name") or "")
     elif changes.get("category_id") and db.get(Category, changes["category_id"]) is None:
         raise HTTPException(400, "Nhóm hàng không tồn tại")
+    if "track_serial" in changes and changes["track_serial"] != p.track_serial:
+        in_stock = db.scalar(select(func.count(ProductSerial.id)).where(
+            ProductSerial.product_id == p.id, ProductSerial.status == "in_stock"))
+        if p.stock != (in_stock if changes["track_serial"] else 0):
+            raise HTTPException(400, "Chỉ đổi cách quản lý serial khi tồn kho bằng 0 (hoặc khớp số serial còn trong kho)")
+    for key in ("vat_rate", "warranty_months"):
+        if key in changes and changes[key] is None:
+            changes.pop(key)
+    old_prices = {"sale_price": p.sale_price, "cost_price": p.cost_price}
     for k, v in changes.items():
         setattr(p, k, v)
+    new_prices = {"sale_price": p.sale_price, "cost_price": p.cost_price}
+    if old_prices != new_prices:  # FR-PRD-05
+        audit.log(db, user, "PRICE_CHANGE", "products", p.id, old=old_prices, new=new_prices)
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(400, "Mã sản phẩm đã tồn tại")
+        raise HTTPException(400, "Mã sản phẩm hoặc mã vạch đã tồn tại")
     return product_out(p, user)
 
 
@@ -223,20 +307,83 @@ def adjust_product_stock(product_id: int, data: StockAdjustIn, db: Session = Dep
 
 @router.get("/stock-movements")
 def list_movements(product_id: int | None = None, type: str | None = None,
+                   date_from: str | None = None, date_to: str | None = None,
                    page: int = Query(1, ge=1), size: int = Query(50, ge=1, le=200),
-                   db: Session = Depends(get_db), _: User = Depends(MANAGERS)):
+                   db: Session = Depends(get_db), _: User = Depends(ALL_STAFF)):
+    """FR-STK-05: thẻ kho theo sản phẩm và khoảng ngày (nhân viên được xem, bảng 4.2)."""
+    from app.services.reports import parse_range
     stmt = select(StockMovement).options(joinedload(StockMovement.product))
     if product_id:
         stmt = stmt.where(StockMovement.product_id == product_id)
     if type:
         stmt = stmt.where(StockMovement.type == type)
+    if date_from or date_to:
+        start, end = parse_range(date_from, date_to)
+        stmt = stmt.where(StockMovement.created_at >= start, StockMovement.created_at < end)
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = db.scalars(stmt.order_by(StockMovement.id.desc()).offset((page - 1) * size).limit(size)).all()
     return {"total": total, "items": [{
         "id": m.id, "product_code": m.product.code, "product_name": m.product.name, "change": m.change,
-        "stock_after": m.stock_after, "type": m.type, "ref_code": m.ref_code, "note": m.note,
-        "created_at": m.created_at,
+        "stock_before": m.stock_after - m.change, "stock_after": m.stock_after, "type": m.type,
+        "ref_code": m.ref_code, "note": m.note, "created_at": m.created_at,
     } for m in rows]}
+
+
+# ---------------- Serial / IMEI (UC-12) ----------------
+def serial_out(s: ProductSerial) -> dict:
+    return {"id": s.id, "product_id": s.product_id, "product_code": s.product.code, "product_name": s.product.name,
+            "serial_no": s.serial_no, "status": s.status, "invoice_item_id": s.invoice_item_id,
+            "purchase_item_id": s.purchase_item_id, "created_at": s.created_at}
+
+
+@router.get("/products/{product_id}/serials")
+def list_product_serials(product_id: int, status: str | None = None, db: Session = Depends(get_db),
+                         _: User = Depends(ALL_STAFF)):
+    stmt = select(ProductSerial).options(joinedload(ProductSerial.product)).where(ProductSerial.product_id == product_id)
+    if status:
+        stmt = stmt.where(ProductSerial.status == status)
+    return [serial_out(s) for s in db.scalars(stmt.order_by(ProductSerial.serial_no))]
+
+
+@router.get("/serials")
+def search_serials(q: str = Query(min_length=2), db: Session = Depends(get_db), _: User = Depends(ALL_STAFF)):
+    like = f"%{q.strip().upper()}%"
+    rows = db.scalars(select(ProductSerial).options(joinedload(ProductSerial.product))
+                      .where(ProductSerial.serial_no.like(like)).order_by(ProductSerial.serial_no).limit(50))
+    return [serial_out(s) for s in rows]
+
+
+@router.put("/serials/{serial_id}")
+def update_serial(serial_id: int, data: SerialUpdateIn, db: Session = Depends(get_db), user: User = Depends(MANAGERS)):
+    """Sửa serial nhập nhầm, hoặc đánh dấu máy trong kho bị lỗi (defective) và ngược lại. Tồn kho đi theo serial."""
+    s = db.get(ProductSerial, serial_id)
+    if s is None:
+        raise HTTPException(404, "Không tìm thấy serial")
+    try:
+        if data.serial_no:
+            new_no = clean_serial(data.serial_no)
+            if new_no != s.serial_no:
+                if s.status != "in_stock":
+                    raise BusinessError("Chỉ sửa số serial của máy còn trong kho")
+                if db.scalar(select(ProductSerial.id).where(ProductSerial.serial_no == new_no)):
+                    raise BusinessError(f"Serial {new_no} đã tồn tại")
+                audit.log(db, user, "SERIAL_UPDATE", "product_serials", s.id, old=s.serial_no, new=new_no)
+                s.serial_no = new_no
+        if data.status and data.status != s.status:
+            if s.status not in ("in_stock", "defective", "returned"):
+                raise BusinessError("Chỉ đổi trạng thái máy đang trong kho, lỗi hoặc khách trả")
+            note = data.note or f"Serial {s.serial_no}: {s.status} -> {data.status}"
+            if data.status == "in_stock":
+                change_stock(db, s.product, 1, "adjust", None, user, note=note)
+            elif s.status == "in_stock":
+                change_stock(db, s.product, -1, "adjust", None, user, note=note)
+            audit.log(db, user, "STOCK_ADJUST", "product_serials", s.id, old=s.status, new=data.status)
+            s.status = data.status
+        db.commit()
+    except BusinessError as e:
+        db.rollback()
+        raise HTTPException(400, str(e))
+    return serial_out(s)
 
 
 # ---------------- Ảnh sản phẩm ----------------

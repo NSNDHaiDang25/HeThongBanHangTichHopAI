@@ -7,8 +7,9 @@ toàn bộ nghiệp vụ thành công (một giao dịch duy nhất).
 from collections import defaultdict
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models import (
     Category, Customer, ImportItem, ImportReceipt, Invoice, InvoiceItem, Product, StockMovement, User, now,
@@ -22,12 +23,17 @@ class BusinessError(Exception):
 
 def change_stock(db: Session, product: Product, delta: int, type_: str, ref: str | None,
                  user: User | None, note: str | None = None, at: datetime | None = None) -> None:
-    new_stock = product.stock + delta
-    if new_stock < 0:
-        raise BusinessError(
-            f"Sản phẩm '{product.name}' không đủ tồn kho (còn {product.stock}, cần {-delta})"
-        )
-    product.stock = new_stock
+    """FR-STK-06: trừ tồn bằng một câu UPDATE có điều kiện stock >= số cần trừ rồi kiểm tra số dòng bị ảnh hưởng,
+    không đọc tồn rồi mới ghi lại, nên hai quầy cùng bán chiếc cuối cùng thì chỉ một quầy thành công."""
+    stmt = update(Product).where(Product.id == product.id).values(stock=Product.stock + delta)
+    if delta < 0:
+        stmt = stmt.where(Product.stock >= -delta)
+    result = db.execute(stmt.execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        current = db.scalar(select(Product.stock).where(Product.id == product.id))
+        raise BusinessError(f"Sản phẩm '{product.name}' không đủ tồn kho (còn {current}, cần {-delta})")
+    new_stock = db.scalar(select(Product.stock).where(Product.id == product.id))
+    set_committed_value(product, "stock", new_stock)
     db.add(StockMovement(
         product_id=product.id, change=delta, stock_after=new_stock, type=type_, ref_code=ref,
         user_id=user.id if user else None, note=note, created_at=at or now(),
@@ -154,33 +160,13 @@ def cancel_invoice(db: Session, invoice: Invoice, reason: str, user: User) -> In
 
 
 def create_import(db: Session, data: ImportIn, user: User, at: datetime | None = None) -> ImportReceipt:
-    at = at or now()
-    receipt = ImportReceipt(
-        code=_next_code(db, ImportReceipt, "PN", at), supplier=data.supplier, note=data.note,
-        user_id=user.id, created_at=at,
-    )
-    db.add(receipt)
-    products = _lock_products(db, [i.product_id for i in data.items if i.product_id is not None])
-    created: dict[str, Product] = {}  # cùng một tên mới xuất hiện nhiều dòng => chỉ tạo một sản phẩm
-    total = 0
-    for item in data.items:
-        if item.new_product is not None:
-            key = " ".join(item.new_product.name.split()).casefold()
-            if key not in created:
-                created[key] = _create_product(db, item.new_product, item.unit_cost)
-            product = created[key]
-        else:
-            product = products[item.product_id]
-        change_stock(db, product, item.quantity, "import", receipt.code, user, at=at)
-        product.cost_price = item.unit_cost  # cập nhật giá nhập gần nhất
-        line_total = item.quantity * item.unit_cost
-        total += line_total
-        receipt.items.append(ImportItem(
-            product_id=product.id, quantity=item.quantity, unit_cost=item.unit_cost, line_total=line_total,
-        ))
-    receipt.total = total
-    db.flush()
-    return receipt
+    """Phiếu nhập kiểu cũ (/api/imports): lập và xác nhận nhập kho ngay, nhà cung cấp chỉ ghi tên."""
+    from app.schemas import PurchaseItemIn, PurchaseOrderIn
+    from app.services import purchasing
+    po = PurchaseOrderIn(supplier_id=data.supplier_id, supplier_name=data.supplier, note=data.note, confirm=True,
+                         items=[PurchaseItemIn(product_id=i.product_id, new_product=i.new_product, quantity=i.quantity,
+                                               unit_cost=i.unit_cost, serials=i.serials) for i in data.items])
+    return purchasing.create(db, po, user, at, require_supplier=False)
 
 
 def _new_product_code(db: Session) -> str:
@@ -199,8 +185,11 @@ def _create_product(db: Session, spec: NewProductIn, unit_cost: int) -> Product:
         raise BusinessError(f"Mã sản phẩm '{code}' đã tồn tại")
     if spec.category_id is not None and db.get(Category, spec.category_id) is None:
         raise BusinessError("Nhóm hàng không tồn tại")
+    cat = db.get(Category, spec.category_id) if spec.category_id else None
     product = Product(code=code, name=name, category_id=spec.category_id, sale_price=spec.sale_price,
-                      cost_price=unit_cost, stock=0, min_stock=spec.min_stock,
+                      cost_price=unit_cost, stock=0, min_stock=spec.min_stock, track_serial=spec.track_serial,
+                      vat_rate=cat.default_vat_rate if cat else 10,
+                      warranty_months=cat.default_warranty_months if cat else 12,
                       description=(spec.description or "").strip() or None, status="active")
     db.add(product)
     db.flush()
@@ -208,6 +197,14 @@ def _create_product(db: Session, spec: NewProductIn, unit_cost: int) -> Product:
 
 
 def adjust_stock(db: Session, product: Product, new_stock: int, note: str, user: User) -> None:
+    """FR-STK-04: kiểm kê, điều chỉnh tồn kèm lý do. Hàng theo serial thì tồn đi theo serial (BR-18)."""
+    if product.track_serial:
+        raise BusinessError("Sản phẩm quản lý theo serial: tồn kho thay đổi qua phiếu nhập, bán hàng, đổi trả "
+                            "hoặc đổi trạng thái serial")
     delta = new_stock - product.stock
     if delta:
+        old = product.stock
         change_stock(db, product, delta, "adjust", None, user, note=note)
+        from app.services import audit
+        audit.log(db, user, "STOCK_ADJUST", "products", product.id, old={"stock": old},
+                  new={"stock": new_stock, "note": note})

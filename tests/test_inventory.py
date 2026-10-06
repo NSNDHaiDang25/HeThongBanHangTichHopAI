@@ -16,7 +16,7 @@ def test_import_increases_stock_and_updates_cost(client, owner_h):
     assert r.json()["total"] == 8 * 230_000
     p = client.get(f"/api/products/{pk1}", headers=owner_h).json()
     assert p["stock"] == 20
-    assert p["cost_price"] == 230_000
+    assert p["cost_price"] == 224_000  # BR-19: (12 x 220.000 + 8 x 230.000) / 20
 
 
 def test_import_can_create_new_products(client, owner_h):

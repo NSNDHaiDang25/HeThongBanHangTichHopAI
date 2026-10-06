@@ -143,40 +143,77 @@ class UserUpdate(BaseModel):
 class CategoryIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str | None = None
+    default_vat_rate: int | None = Field(default=None, ge=0, le=100)  # bỏ trống => vat_rate_default
+    default_warranty_months: int | None = Field(default=None, ge=0, le=120)
+    is_active: bool = True
 
 
 class CategoryOut(ORM):
     id: int
     name: str
     description: str | None
+    default_vat_rate: int = 10
+    default_warranty_months: int = 12
+    is_active: bool = True
 
 
 # ---------- Product ----------
+ProductStatus = Literal["active", "inactive", "discontinued"]
+
+
+def _sku(v: str) -> str:
+    v = v.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9\-]{2,30}", v):
+        raise ValueError("Mã sản phẩm (SKU) chỉ gồm chữ in hoa, số và dấu gạch ngang")
+    return v
+
+
+def _barcode(v: str | None) -> str | None:
+    v = (v or "").strip()
+    if v and not re.fullmatch(r"\d{8,14}", v):
+        raise ValueError("Mã vạch phải là chuỗi số 8 đến 14 ký tự")
+    return v or None
+
+
+Sku = Annotated[str, Field(min_length=1, max_length=30), AfterValidator(_sku)]
+Barcode = Annotated[str | None, AfterValidator(_barcode)]
+
+
 class ProductIn(BaseModel):
-    code: str = Field(min_length=1, max_length=30)
+    code: Sku
+    barcode: Barcode = None
     name: str = Field(min_length=1, max_length=200)
     category_id: int | None = None
     # Nhập tên nhóm thay cho category_id: chưa có thì tạo mới, chuỗi rỗng = không phân nhóm
     category_name: str | None = Field(default=None, max_length=100)
+    brand: str | None = Field(default=None, max_length=50)
     sale_price: SalePrice
     cost_price: int = Field(ge=0, default=0)
+    vat_rate: int | None = Field(default=None, ge=0, le=100)  # bỏ trống => theo nhóm hàng
+    warranty_months: int | None = Field(default=None, ge=0, le=120)  # bỏ trống => theo nhóm hàng
+    track_serial: bool = False
     stock: int = Field(ge=0, default=0)
     min_stock: int = Field(ge=0, default=5)
     description: str | None = None
-    status: Literal["active", "inactive"] = "active"
+    status: ProductStatus = "active"
 
 
 class ProductUpdate(BaseModel):
     """Không cho sửa trực tiếp tồn kho ở đây: tồn kho thay đổi qua hóa đơn, phiếu nhập hoặc điều chỉnh kho."""
-    code: str | None = Field(default=None, min_length=1, max_length=30)
+    code: Sku | None = None
+    barcode: Barcode = None
     name: str | None = Field(default=None, min_length=1, max_length=200)
     category_id: int | None = None
     category_name: str | None = Field(default=None, max_length=100)  # như ProductIn.category_name
+    brand: str | None = Field(default=None, max_length=50)
     sale_price: SalePrice | None = None
     cost_price: int | None = Field(default=None, ge=0)
+    vat_rate: int | None = Field(default=None, ge=0, le=100)
+    warranty_months: int | None = Field(default=None, ge=0, le=120)
+    track_serial: bool | None = None
     min_stock: int | None = Field(default=None, ge=0)
     description: str | None = None
-    status: Literal["active", "inactive"] | None = None
+    status: ProductStatus | None = None
 
 
 class StockAdjustIn(BaseModel):
@@ -187,16 +224,27 @@ class StockAdjustIn(BaseModel):
 class ProductOut(ORM):
     id: int
     code: str
+    barcode: str | None = None
     name: str
     category_id: int | None
     category_name: str | None = None
+    brand: str | None = None
     sale_price: int
     cost_price: int
+    vat_rate: int = 10
+    warranty_months: int = 12
+    track_serial: bool = False
     stock: int
     min_stock: int
     description: str | None
     image_url: str | None = None
     status: str
+
+
+class SerialUpdateIn(BaseModel):
+    serial_no: str | None = Field(default=None, min_length=5, max_length=50)
+    status: Literal["in_stock", "defective"] | None = None
+    note: str | None = Field(default=None, max_length=255)
 
 
 # ---------- Customer ----------
@@ -287,14 +335,14 @@ class NewProductIn(BaseModel):
     category_id: int | None = None
     sale_price: SalePrice
     min_stock: int = Field(default=5, ge=0)
+    track_serial: bool = False
     description: str | None = None
 
 
-class ImportItemIn(BaseModel):
+class _OneProduct(BaseModel):
     product_id: int | None = None
     new_product: NewProductIn | None = None
-    quantity: ImportAmount
-    unit_cost: ImportAmount
+    serials: list[str] = Field(default_factory=list, max_length=9999)  # sản phẩm theo serial: đủ số lượng
 
     @model_validator(mode="after")
     def one_product(self):
@@ -303,10 +351,53 @@ class ImportItemIn(BaseModel):
         return self
 
 
+class ImportItemIn(_OneProduct):
+    quantity: ImportAmount
+    unit_cost: ImportAmount
+
+
 class ImportIn(BaseModel):
     supplier: str | None = None
+    supplier_id: int | None = None
     note: str | None = None
     items: list[ImportItemIn] = Field(min_length=1)
+
+
+class PurchaseItemIn(_OneProduct):
+    quantity: Annotated[int, Field(le=9999), _positive("Số lượng và giá nhập phải lớn hơn 0")]
+    # Bỏ trống khi lập nháp (nhân viên không thấy giá nhập); bắt buộc lớn hơn 0 khi xác nhận nhập kho
+    unit_cost: Annotated[int | None, Field(default=None, ge=1, le=2_000_000_000)] = None
+
+
+class PurchaseOrderIn(BaseModel):
+    supplier_id: int | None = None
+    supplier_name: str | None = Field(default=None, max_length=150)  # chỉ dùng cho /api/imports kiểu cũ
+    note: str | None = Field(default=None, max_length=255)
+    items: list[PurchaseItemIn] = Field(min_length=1)
+    confirm: bool = False  # True: lưu và xác nhận nhập kho ngay (chủ cửa hàng)
+
+
+class CancelIn(BaseModel):
+    reason: Reason
+
+
+class SupplierIn(BaseModel):
+    code: str | None = Field(default=None, max_length=20)  # bỏ trống => tự sinh NCC001...
+    name: str = Field(min_length=1, max_length=150)
+    contact_name: str | None = Field(default=None, max_length=100)
+    phone: Annotated[str | None, AfterValidator(normalize_phone)] = None
+    email: Annotated[str | None, AfterValidator(normalize_email)] = None
+    address: str | None = Field(default=None, max_length=255)
+    tax_code: str | None = Field(default=None, max_length=20)
+    status: Literal["active", "inactive"] = "active"
+
+    @field_validator("code")
+    @classmethod
+    def code_upper(cls, v: str | None):
+        v = (v or "").strip().upper()
+        if v and not re.fullmatch(r"[A-Z0-9\-]{2,20}", v):
+            raise ValueError("Mã nhà cung cấp gồm chữ in hoa, số và dấu gạch ngang")
+        return v or None
 
 
 # ---------- AI ----------
