@@ -1,6 +1,10 @@
+name: techstoreai
+
 services:
   web:
     build: .
+    image: techstoreai:latest
+    container_name: techstoreai
     ports:
       - "8000:8000"
     env_file: .env

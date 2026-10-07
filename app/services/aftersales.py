@@ -30,18 +30,20 @@ def _refund_for(it: InvoiceItem, qty: int) -> int:
 def eligibility(db: Session, inv: Invoice) -> dict:
     deadline = return_deadline(db, inv)
     t = now()
-    reason = None
+    reason, reason_code = None, None
     if inv.status not in ("paid", "partially_returned"):
+        reason_code = "INVOICE_NOT_RETURNABLE"
         reason = {"pending_payment": "Hóa đơn chưa thanh toán, chưa phát sinh doanh thu nên không đổi trả",
                   "draft": "Hóa đơn nháp", "cancelled": "Hóa đơn đã hủy",
                   "fully_returned": "Hóa đơn đã trả hết hàng"}.get(inv.status, "Hóa đơn không đổi trả được")
     elif deadline is None or t > deadline:
+        reason_code = "RETURN_WINDOW_EXPIRED"
         reason = (f"Đã quá {app_settings.get(db, 'return_window_hours')} giờ kể từ lúc thanh toán. "
                   "Hàng lỗi vui lòng chuyển sang bảo hành")
     return {
         "invoice_id": inv.id, "code": inv.code, "status": inv.status, "paid_at": inv.paid_at, "deadline": deadline,
         "seconds_left": max(0, int((deadline - t).total_seconds())) if deadline else 0,
-        "eligible": reason is None, "reason": reason, "payment_method": inv.payment_method,
+        "eligible": reason is None, "reason": reason, "reason_code": reason_code, "payment_method": inv.payment_method,
         "customer_name": inv.customer.name if inv.customer else "Khách lẻ",
         "lines": [{"invoice_item_id": it.id, "product_id": it.product_id, "product_code": it.product.code,
                    "product_name": it.product.name, "quantity": it.quantity, "returned_qty": it.returned_qty,
@@ -54,10 +56,10 @@ def eligibility(db: Session, inv: Invoice) -> dict:
 def create_return(db: Session, data: ReturnIn, user: User) -> Return:
     inv = db.get(Invoice, data.invoice_id)
     if inv is None:
-        raise BusinessError("Không tìm thấy hóa đơn")
+        raise BusinessError("Không tìm thấy hóa đơn", "NOT_FOUND", 404)
     info = eligibility(db, inv)
     if not info["eligible"]:
-        raise BusinessError(info["reason"])  # BR-30, FR-RET-02
+        raise BusinessError(info["reason"], info["reason_code"])  # BR-30, FR-RET-02
     items = {it.id: it for it in inv.items}
     at = now()
     ret = Return(code=next_code(db, Return, "DT", at), invoice_id=inv.id, customer_id=inv.customer_id,
@@ -74,13 +76,14 @@ def create_return(db: Session, data: ReturnIn, user: User) -> Return:
             raise BusinessError(f"Dòng '{it.product.name}' bị chọn hai lần")
         seen.add(it.id)
         if req.quantity > it.quantity - it.returned_qty:  # BR-31, FR-RET-03
-            raise BusinessError(f"'{it.product.name}': chỉ trả được tối đa {it.quantity - it.returned_qty}")
+            raise BusinessError(f"'{it.product.name}': chỉ trả được tối đa {it.quantity - it.returned_qty}",
+                                    "RETURN_QTY_EXCEEDED")
         serial = None
         if it.serial_id:  # FR-RET-04: đối chiếu serial trả với serial trên hóa đơn
             given = (req.serial_no or "").strip().upper()
             serial = db.get(ProductSerial, it.serial_id)
             if not given or given != serial.serial_no:
-                raise BusinessError(f"Serial trả lại không khớp serial đã bán của '{it.product.name}'")
+                raise BusinessError(f"Serial trả lại không khớp serial đã bán của '{it.product.name}'", "SERIAL_MISMATCH")
         refund = _refund_for(it, req.quantity)
         restock = req.item_condition == "sellable"  # BR-33
         if restock:
@@ -206,14 +209,16 @@ def warranty_out(db: Session, w: Warranty) -> dict:
 def create_ticket(db: Session, warranty_id: int, issue: str, user: User) -> WarrantyTicket:
     w = db.get(Warranty, warranty_id)
     if w is None:
-        raise BusinessError("Không tìm thấy hồ sơ bảo hành")
+        raise BusinessError("Không tìm thấy hồ sơ bảo hành", "NOT_FOUND", 404)
     refresh_expired(db)
     if w.status != "active":  # BR-38
         raise BusinessError("Hồ sơ bảo hành đã hết hạn" if w.status == "expired"
-                            else "Hồ sơ bảo hành không còn hiệu lực (hàng đã trả hoặc hóa đơn đã hủy)")
+                            else "Hồ sơ bảo hành không còn hiệu lực (hàng đã trả hoặc hóa đơn đã hủy)",
+                            "WARRANTY_EXPIRED" if w.status == "expired" else "WARRANTY_VOID")
     existing = open_ticket_for(db, w)
     if existing is not None:  # FR-WAR-04
-        raise BusinessError(f"Máy đang có phiếu bảo hành {existing.code} chưa xử lý xong")
+        raise BusinessError(f"Máy đang có phiếu bảo hành {existing.code} chưa xử lý xong", "WARRANTY_TICKET_OPEN",
+                                details={"ticket_id": existing.id, "ticket_code": existing.code})
     at = now()
     t = WarrantyTicket(code=next_code(db, WarrantyTicket, "BH", at), warranty_id=w.id, issue_description=issue,
                        status="received", received_by=user.id, received_at=at)

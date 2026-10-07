@@ -11,7 +11,7 @@ import Markdown from '../ui/Markdown.jsx'
 
 const CFG = {
   assistant: {
-    endpoint: '/ai/assistant', name: 'Trợ lý TechStore', cart: true,
+    endpoint: '/ai/assistant', name: 'Trợ lý TechStoreAI', cart: true,
     greeting: 'Hôm nay mình giúp gì được cho bạn?',
     intro: 'Hỏi về sản phẩm, giá, tồn kho, hóa đơn, khách hàng, doanh thu hay cách dùng phần mềm. Trợ lý tự tra dữ liệu thật của cửa hàng trong phạm vi quyền của bạn.',
     placeholder: 'VD: tuần này bán được bao nhiêu? sạc nào dưới 200k còn hàng?',

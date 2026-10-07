@@ -7,6 +7,7 @@ def login(client, username, password):
 
 
 # ---------------------------------------------------------------- AUT
+# FR-AUT-04
 def test_wrong_username_and_wrong_password_get_same_message(client):
     a = login(client, "khong-co", "owner123")
     b = login(client, "owner", "sai-mat-khau1")
@@ -14,6 +15,7 @@ def test_wrong_username_and_wrong_password_get_same_message(client):
     assert a.json()["detail"] == b.json()["detail"]
 
 
+# TC-AUT-01 (SRS 11.3)
 def test_account_locked_after_5_failures_then_admin_unlocks(client, admin_h):
     for _ in range(4):
         assert login(client, "staff", "sai-mat-khau1").status_code == 401
@@ -35,6 +37,7 @@ def test_success_resets_failure_counter(client):
         assert login(client, "staff", "sai-mat-khau1").status_code == 401  # đếm lại từ đầu
 
 
+# TC-AUT-03 (SRS 11.3)
 def test_logout_revokes_token(client):
     h = _login(client, "staff", "staff123")
     assert client.get("/api/auth/me", headers=h).status_code == 200
@@ -65,12 +68,14 @@ def test_new_user_must_change_password_first(client, admin_h):
     assert login(client, "nv3", "MoiMoi123").status_code == 200
 
 
+# FR-USR-01
 def test_password_policy_on_create(client, admin_h):
     for pw in ("ngan1", "chicochu", "12345678"):
         r = client.post("/api/users", json={"username": "x" + pw, "full_name": "X", "password": pw}, headers=admin_h)
         assert r.status_code == 422, pw
 
 
+# FR-USR-03
 def test_admin_reset_password_forces_change(client, admin_h):
     staff_id = next(u["id"] for u in client.get("/api/users", headers=admin_h).json() if u["username"] == "staff")
     r = client.post(f"/api/users/{staff_id}/reset-password", json={"new_password": "DatLai2026"}, headers=admin_h)
@@ -79,6 +84,7 @@ def test_admin_reset_password_forces_change(client, admin_h):
     assert client.get("/api/invoices", headers=h).status_code == 403
 
 
+# FR-USR-03, FR-USR-05
 def test_role_change_is_audited(client, admin_h):
     staff_id = next(u["id"] for u in client.get("/api/users", headers=admin_h).json() if u["username"] == "staff")
     client.put(f"/api/users/{staff_id}", json={"role": "owner"}, headers=admin_h)
@@ -128,6 +134,7 @@ def test_owner_sees_only_business_audit_logs(client, owner_h, admin_h):
 
 
 # ---------------------------------------------------------------- AI
+# TC-AIG-01 (SRS 11.3)
 def test_ai_calls_are_logged_with_phone_masked(client, staff_h, owner_h, fake_ai):
     fake_ai.response = '{"answer": "Gợi ý", "suggestions": []}'
     r = client.post("/api/ai/advisor", json={"message": "khách 0912345678 cần tai nghe"}, headers=staff_h)
@@ -136,7 +143,7 @@ def test_ai_calls_are_logged_with_phone_masked(client, staff_h, owner_h, fake_ai
     assert logs["total"] == 1
     item = logs["items"][0]
     assert item["feature"] == "advisor" and item["prompt_version"] == "v3" and item["status"] == "success"
-    assert "0912345678" not in item["question"] and "091*****8" in item["question"]
+    assert "0912345678" not in item["question"] and "[SĐT]" in item["question"]  # TC-AIG-01
 
 
 def test_staff_only_sees_own_ai_logs(client, staff_h, owner_h):
@@ -146,6 +153,7 @@ def test_staff_only_sees_own_ai_logs(client, staff_h, owner_h):
     assert client.get("/api/ai/logs", headers=owner_h).json()["total"] == 2
 
 
+# FR-AIG-08
 def test_ai_can_be_switched_off(client, admin_h, staff_h):
     client.put("/api/settings", json={"values": {"ai_enabled": False}}, headers=admin_h)
     r = client.post("/api/ai/advisor", json={"message": "tai nghe"}, headers=staff_h)
@@ -154,6 +162,7 @@ def test_ai_can_be_switched_off(client, admin_h, staff_h):
     assert client.get("/api/products", headers=staff_h).status_code == 200  # NFR-REL-05: phần khác vẫn chạy
 
 
+# TC-AIG-05 (SRS 11.3)
 def test_ai_rate_limit_per_hour(client, admin_h, staff_h):
     client.put("/api/settings", json={"values": {"ai_rate_limit_per_hour": 2}}, headers=admin_h)
     for _ in range(2):
@@ -161,6 +170,7 @@ def test_ai_rate_limit_per_hour(client, admin_h, staff_h):
     assert client.post("/api/ai/advisor", json={"message": "tai nghe"}, headers=staff_h).status_code == 429
 
 
+# FR-AIG-01, FR-AIG-08
 def test_prompt_version_comes_from_settings(client, admin_h, staff_h, owner_h):
     client.put("/api/settings", json={"values": {"ai_prompt_version": "v1"}}, headers=admin_h)
     assert client.post("/api/ai/advisor", json={"message": "tai nghe"}, headers=staff_h).json()["version"] == "v1"

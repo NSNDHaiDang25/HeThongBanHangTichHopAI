@@ -197,11 +197,19 @@ def ai_data_context(db: Session, start: datetime, end: datetime) -> dict:
     """Gói dữ liệu tổng hợp gửi cho AI. Chỉ số liệu kinh doanh, KHÔNG có thông tin cá nhân khách hàng."""
     period_days = (end - start).days
     prev_start = start - timedelta(days=period_days)
+    summary, previous = revenue_total(db, start, end), revenue_total(db, prev_start, start)
+    # FR-AIR-01: hệ thống tự tính phần so sánh với kỳ trước và giá trị tồn, AI không tự làm phép tính (SRS 6.4)
+    growth = round((summary["revenue"] - previous["revenue"]) * 100 / previous["revenue"], 1) \
+        if previous["revenue"] else None
+    stock_value = int(db.scalar(select(func.coalesce(func.sum(Product.stock * Product.cost_price), 0))
+                                .where(Product.status == "active")) or 0)
     return {
         "period": {"from": start.date().isoformat(), "to": (end - timedelta(days=1)).date().isoformat(),
                    "days": period_days},
-        "summary": revenue_total(db, start, end),
-        "previous_period_summary": revenue_total(db, prev_start, start),
+        "summary": summary,
+        "previous_period_summary": previous,
+        "comparison": {"revenue_change": summary["revenue"] - previous["revenue"], "growth_percent": growth},
+        "stock_value": stock_value,
         "revenue_by_category": revenue_by_category(db, start, end),
         "top_products": top_products(db, start, end, 10),
         "slow_products": slow_products(db, start, end, 10),

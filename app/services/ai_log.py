@@ -2,12 +2,14 @@
 import re
 from datetime import timedelta
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.ai.client import get_ai_client
+from app.ai.sanitizer import scrub
 from app.database import get_db
+from app.errors import APIError
 from app.models import AILog, User, now
 from app.security import get_current_user
 from app.services import app_settings
@@ -44,7 +46,7 @@ def status_of(result: dict) -> str:
 def record(db: Session, user: User, feature: str, question: str, result: dict, *, prompt_version: str = "-",
            model: str | None = None, generated_sql: str | None = None, response: str | None = None) -> AILog:
     log = AILog(user_id=user.id, feature=feature, prompt_version=(prompt_version or "-")[:10],
-                model_name=(result.get("model") or model or "-")[:50], question=mask_sensitive(question)[:4000],
+                model_name=(result.get("model") or model or "-")[:50], question=scrub(question)[:4000],
                 generated_sql=generated_sql, response=mask_sensitive(response if response is not None
                                                                       else result.get("answer"))[:8000],
                 status=status_of(result), latency_ms=result.get("latency_ms"),
@@ -57,13 +59,18 @@ def ai_guard(db: Session = Depends(get_db), user: User = Depends(get_current_use
     """Chặn khi AI đang tắt (ai_enabled) hoặc người dùng đã gọi quá ai_rate_limit_per_hour lượt trong 1 giờ."""
     cfg = app_settings.get_many(db, ["ai_enabled", "ai_rate_limit_per_hour"])
     if not cfg["ai_enabled"]:
-        raise HTTPException(503, "Tính năng AI đang tắt. Liên hệ quản trị viên để bật lại")
+        raise APIError(503, "Tính năng AI đang tắt. Liên hệ quản trị viên để bật lại", "AI_DISABLED")
     limit = cfg["ai_rate_limit_per_hour"]
     if limit:
         used = db.scalar(select(func.count(AILog.id)).where(AILog.user_id == user.id,
                                                             AILog.created_at >= now() - timedelta(hours=1)))
         if used >= limit:
-            raise HTTPException(429, f"Bạn đã dùng hết {limit} lượt AI trong 1 giờ, vui lòng thử lại sau")
+            oldest = db.scalar(select(func.min(AILog.created_at)).where(
+                AILog.user_id == user.id, AILog.created_at >= now() - timedelta(hours=1)))
+            wait = max(1, int(((oldest + timedelta(hours=1)) - now()).total_seconds() // 60) + 1) if oldest else 60
+            raise APIError(429, f"Bạn đã dùng hết {limit} lượt AI trong 1 giờ, thử lại sau khoảng {wait} phút",
+                           "RATE_LIMITED", {"limit": limit, "retry_after_minutes": wait},
+                           headers={"Retry-After": str(wait * 60)})
     return user
 
 

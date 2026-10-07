@@ -1,5 +1,5 @@
 <!--
-Hướng dẫn sử dụng SalesAI - kho kiến thức cho trợ lý AI đa năng (công cụ app_guide trong app/ai/tools.py).
+Hướng dẫn sử dụng TechStoreAI - kho kiến thức cho trợ lý AI đa năng (công cụ app_guide trong app/ai/tools.py).
 Mỗi mục bắt đầu bằng "## "; trợ lý tìm mục khớp chủ đề câu hỏi rồi trả lời dựa trên nội dung mục đó.
 Khi thêm / đổi chức năng trên giao diện, cập nhật file này để trợ lý hướng dẫn đúng.
 -->

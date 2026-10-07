@@ -70,6 +70,7 @@ def sample(client, owner_h, db):
 
 
 # ---------------------------------------------------------------- TC-SAL-01
+# TC-SAL-01 (SRS 11.3)
 def test_preview_matches_srs_example(client, staff_h, sample):
     r = client.post("/api/invoices/preview", json={"items": sample["items"], "customer_id": sample["customer"]["id"],
                                                     "promo_code": "tech10", "points_used": 200}, headers=staff_h)
@@ -83,6 +84,7 @@ def test_preview_matches_srs_example(client, staff_h, sample):
     assert cart["promotions"][0]["code"] == "TECH10"
 
 
+# TC-SAL-01 (SRS 11.3)
 def test_checkout_srs_example_updates_points_tier_and_warranty(client, staff_h, sample, db):
     nam = sample["customer"]
     r = sell(client, staff_h, sample["items"], customer_id=nam["id"], promo_code="TECH10", points_used=200,
@@ -105,6 +107,7 @@ def test_checkout_srs_example_updates_points_tier_and_warranty(client, staff_h, 
 
 
 # ---------------------------------------------------------------- Khuyến mãi
+# TC-PRM-01 (SRS 11.3)
 def test_voucher_rejections_explain_reason(client, owner_h, staff_h, sample):
     items = sample["items"][:1]
     add_promo(client, owner_h, name="Hết hạn", code="OLD", start_at=iso(now() - 10 * DAY), end_at=iso(now() - DAY))
@@ -128,6 +131,7 @@ def test_voucher_rejections_explain_reason(client, owner_h, staff_h, sample):
     assert ok["valid"] and ok["cart"]["discount"] == 500_000
 
 
+# TC-PRM-02, FR-PRM-01, FR-PRM-02, FR-PRM-04, FR-PRM-05 (SRS 11.3)
 def test_best_line_promotion_per_product_and_auto_invoice_promo(client, owner_h, staff_h, sample):
     p = sample["products"]
     add_promo(client, owner_h, name="Chuột -10%", promo_type="percent", scope="product",
@@ -156,20 +160,25 @@ def test_staff_cannot_manage_promotions(client, staff_h):
 
 
 # ---------------------------------------------------------------- Điểm
+# TC-LOY-02 (SRS 11.3)
 def test_points_limits(client, staff_h, sample, db):
     nam = sample["customer"]
     set_customer(db, nam["id"], points=100_000)
     items = sample["items"][1:2]  # 2 chuột = 580.000
     r = client.post("/api/invoices/preview", json={"items": items, "customer_id": nam["id"]}, headers=staff_h).json()
     assert r["points_max"] == 2_900  # 50% x 580.000 / 100
-    over = sell(client, staff_h, items, customer_id=nam["id"], points_used=2_901)
-    assert over.status_code == 400 and "tối đa 2900 điểm" in over.json()["detail"]
+    # TC-LOY-02: dùng vượt 50% giá trị hóa đơn thì tự hạ về mức tối đa và thông báo (UC-22 luồng 2a)
+    over = client.post("/api/invoices/preview", json={"items": items, "customer_id": nam["id"], "points_used": 2_901},
+                       headers=staff_h).json()
+    assert over["points_used"] == 2_900 and over["points_discount"] == 290_000
+    assert any("2901 xuống 2900" in w for w in over["warnings"])
     walk_in = sell(client, staff_h, items, points_used=1)
-    assert walk_in.status_code == 400 and "Khách lẻ" in walk_in.json()["detail"]
+    assert walk_in.status_code == 409 and "Khách lẻ" in walk_in.json()["detail"]
     ok = sell(client, staff_h, items, customer_id=nam["id"], points_used=1_000).json()
     assert ok["total"] == 480_000 and ok["points_discount"] == 100_000
 
 
+# FR-SAL-06
 def test_walk_in_customer_earns_no_points(client, staff_h, sample):
     inv = sell(client, staff_h, sample["items"][:1]).json()
     assert inv["points_earned"] == 0 and inv["customer_name"] == "Khách lẻ"
@@ -189,6 +198,7 @@ def test_owner_adjusts_points_with_reason(client, owner_h, staff_h, sample):
 
 
 # ---------------------------------------------------------------- Chuyển khoản chờ xác nhận
+# TC-PAY-02 (SRS 11.3)
 def test_bank_transfer_waits_for_confirmation(client, staff_h, sample):
     nam = sample["customer"]
     items = sample["items"][2:3]
@@ -204,18 +214,19 @@ def test_bank_transfer_waits_for_confirmation(client, staff_h, sample):
     assert r.json()["payments"][-1]["status"] == "confirmed"
     after = client.get(f"/api/customers/{nam['id']}", headers=staff_h).json()["loyalty_points"]
     assert after - before == 142  # 119 x 1,2
-    assert client.post(f"/api/invoices/{inv['id']}/confirm-payment", headers=staff_h).status_code == 400
+    assert client.post(f"/api/invoices/{inv['id']}/confirm-payment", headers=staff_h).status_code == 409
 
 
 def test_change_payment_method_while_pending(client, staff_h, sample):
     inv = sell(client, staff_h, sample["items"][2:3], payment_method="bank_transfer").json()
     bad = client.post(f"/api/invoices/{inv['id']}/confirm-payment", json={"payment_method": "card"}, headers=staff_h)
-    assert bad.status_code == 400
+    assert bad.status_code == 422
     r = client.post(f"/api/invoices/{inv['id']}/confirm-payment",
                     json={"payment_method": "card", "payment_ref": "POS998877"}, headers=staff_h)
     assert r.json()["payment_method"] == "card" and r.json()["status"] == "paid"
 
 
+# TC-SAL-10 (SRS 11.3)
 def test_pending_invoice_expires_after_30_minutes(client, staff_h, owner_h, sample, db):
     inv = sell(client, staff_h, sample["items"][:1], payment_method="bank_transfer", promo_code="TECH10").json()
     assert stock_of(client, staff_h, "LT-VIVO15") == 19
@@ -232,7 +243,7 @@ def test_pending_invoice_expires_after_30_minutes(client, staff_h, owner_h, samp
 
 def test_card_requires_pos_reference(client, staff_h, sample):
     r = sell(client, staff_h, sample["items"][:1], payment_method="card")
-    assert r.status_code == 400 and "POS" in r.json()["detail"]
+    assert r.status_code == 422 and "POS" in r.json()["detail"]
 
 
 # ---------------------------------------------------------------- Nháp
@@ -264,18 +275,19 @@ def phone_with_serials(client, owner_h):
     return p
 
 
+# TC-SAL-03, FR-PRD-09 (SRS 11.3)
 def test_serial_must_be_chosen_and_is_marked_sold(client, staff_h, owner_h, phone_with_serials):
     pid = phone_with_serials["id"]
     no_serial = sell(client, staff_h, [{"product_id": pid, "quantity": 1}])
-    assert no_serial.status_code == 400 and "serial" in no_serial.json()["detail"]
+    assert no_serial.status_code == 422 and "serial" in no_serial.json()["detail"]
     two = sell(client, staff_h, [{"product_id": pid, "quantity": 2, "serial_no": "IMEI0000001"}])
-    assert two.status_code == 400
+    assert two.status_code == 409
     inv = sell(client, staff_h, [{"product_id": pid, "quantity": 1, "serial_no": "imei0000001"}]).json()
     assert inv["items"][0]["serial_no"] == "IMEI0000001"
     serials = {s["serial_no"]: s["status"] for s in client.get(f"/api/products/{pid}/serials", headers=staff_h).json()}
     assert serials == {"IMEI0000001": "sold", "IMEI0000002": "in_stock"}
     again = sell(client, staff_h, [{"product_id": pid, "quantity": 1, "serial_no": "IMEI0000001"}])
-    assert again.status_code == 400 and "không còn trong kho" in again.json()["detail"]
+    assert again.status_code == 409 and "không còn trong kho" in again.json()["detail"]
     r = client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "Lập sai hóa đơn"}, headers=owner_h)
     assert r.json()["status"] == "cancelled"
     serials = {s["serial_no"]: s["status"] for s in client.get(f"/api/products/{pid}/serials", headers=staff_h).json()}
@@ -283,17 +295,19 @@ def test_serial_must_be_chosen_and_is_marked_sold(client, staff_h, owner_h, phon
 
 
 # ---------------------------------------------------------------- Giá vốn, hủy
+# TC-SAL-11 (SRS 11.3)
 def test_staff_cannot_sell_below_cost_but_owner_can(client, staff_h, owner_h, sample):
     add_promo(client, owner_h, name="Xả kho tai nghe", promo_type="percent", scope="product",
               target_id=sample["products"]["headset"]["id"], discount_value=50)
     items = sample["items"][2:3]
     r = sell(client, staff_h, items)
-    assert r.status_code == 400 and "giá vốn" in r.json()["detail"]
+    assert r.status_code == 409 and "giá vốn" in r.json()["detail"]
     r = sell(client, owner_h, items)
     assert r.status_code == 201 and r.json()["warnings"]
     assert client.get("/api/audit-logs", params={"action": "INVOICE_BELOW_COST"}, headers=owner_h).json()["total"] == 1
 
 
+# TC-SAL-07 (SRS 11.3)
 def test_cancel_paid_invoice_reverses_points_tier_and_voucher(client, owner_h, sample, db):
     nam = sample["customer"]
     inv = sell(client, owner_h, sample["items"], customer_id=nam["id"], promo_code="TECH10", points_used=200).json()
@@ -308,16 +322,18 @@ def test_cancel_paid_invoice_reverses_points_tier_and_voucher(client, owner_h, s
     assert stock_of(client, owner_h, "LT-VIVO15") == 20
 
 
+# TC-SAL-09 (SRS 11.3)
 def test_paid_invoice_can_only_be_cancelled_on_its_day(client, owner_h, sample, db):
     inv = sell(client, owner_h, sample["items"][:1]).json()
     row = db.get(Invoice, inv["id"])
     row.created_at = row.created_at - DAY
     db.commit()
     r = client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "Lập sai hóa đơn"}, headers=owner_h)
-    assert r.status_code == 400 and "trong ngày lập" in r.json()["detail"]
+    assert r.status_code == 409 and "trong ngày lập" in r.json()["detail"]
 
 
 # ---------------------------------------------------------------- In ấn
+# TC-PAY-03 (SRS 11.3)
 def test_invoice_pdf_and_reprint(client, staff_h, owner_h, sample):
     inv = sell(client, staff_h, sample["items"], customer_id=sample["customer"]["id"]).json()
     first = client.get(f"/api/invoices/{inv['id']}/pdf", headers=staff_h)

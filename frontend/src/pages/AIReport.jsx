@@ -1,6 +1,6 @@
 // AI sinh báo cáo doanh thu (UC-35, SRS 6.4): hệ thống tính số liệu, AI viết nhận xét và khuyến nghị nhập hàng
 import { useState } from 'react'
-import { api } from '../api.js'
+import { api, getToken } from '../api.js'
 import { daysAgo, money, num, today } from '../format.js'
 import Icon from '../ui/Icon.jsx'
 import { Empty, useToast } from '../ui/kit.jsx'
@@ -28,6 +28,20 @@ export default function AIReport() {
     a.href = url; a.download = `bao-cao-ai-${res.period.from}-${res.period.to}.md`; a.click()
     setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
+  // FR-AIR-06: xuất báo cáo đang xem ra PDF
+  const downloadPdf = async () => {
+    try {
+      const resp = await fetch('/api/ai/report/pdf', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ markdown: res.markdown, date_from: res.period.from, date_to: res.period.to }),
+      })
+      if (!resp.ok) throw new Error(`Lỗi ${resp.status}`)
+      const url = URL.createObjectURL(await resp.blob())
+      const a = document.createElement('a')
+      a.href = url; a.download = `bao-cao-ai-${res.period.from}-${res.period.to}.pdf`; a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (e) { toast(`Không xuất được PDF: ${e.message}`, 'error') }
+  }
   const s = res?.data?.summary
   const prev = res?.data?.previous_period_summary
   return (
@@ -46,12 +60,14 @@ export default function AIReport() {
             : <>
               <div className="card-head"><h2><Icon name="sparkles" />Báo cáo {res.period.from} → {res.period.to} ({res.period.days} ngày)</h2>
                 <button className="btn sm" onClick={() => navigator.clipboard?.writeText(res.markdown).then(() => toast('Đã sao chép', 'success'))}><Icon name="copy" />Sao chép</button>
+                <button className="btn sm" onClick={downloadPdf}><Icon name="download" />Tải PDF</button>
                 <button className="btn sm" onClick={download}><Icon name="download" />Tải .md</button></div>
               <div className="row mb-4" style={{ flexWrap: 'wrap' }}>
                 {res.source === 'ai' ? <span className="badge dot cyan">Gemini{res.model ? ` · ${res.model}` : ''}</span> : <span className="badge dot yellow">Báo cáo dự phòng</span>}
                 {res.latency_ms ? <span className="muted small">{res.latency_ms} ms</span> : null}
                 {s && <span className="muted small">Số liệu đối chiếu: doanh thu {money(s.revenue)} · {num(s.invoice_count)} hóa đơn
-                  {prev && pctChange(s.revenue, prev.revenue) ? ` · so với kỳ trước ${pctChange(s.revenue, prev.revenue)}` : ''}</span>}
+                  {prev && pctChange(s.revenue, prev.revenue) ? ` · so với kỳ trước ${pctChange(s.revenue, prev.revenue)}` : ''}
+                  {res.data.stock_value != null ? ` · giá trị tồn ${money(res.data.stock_value)}` : ''}</span>}
               </div>
               {res.warning && <div className="note mb-4"><Icon name="alert" /><span>{res.warning}</span></div>}
               <Markdown text={res.markdown} />

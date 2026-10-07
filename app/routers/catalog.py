@@ -95,7 +95,7 @@ def product_out(p: Product, user: User) -> dict:
     data["category_name"] = p.category.name if p.category else None
     data["stock_state"] = stock_state(p)
     if user.role == "staff":
-        data["cost_price"] = None  # nhân viên bán hàng không xem giá nhập (FR-PRD-08)
+        data.pop("cost_price", None)  # nhân viên bán hàng không thấy trường giá nhập (FR-PRD-08, TC-AUT-02)
     return data
 
 
@@ -300,7 +300,7 @@ def adjust_product_stock(product_id: int, data: StockAdjustIn, db: Session = Dep
         adjust_stock(db, p, data.new_stock, data.note, user)
     except BusinessError as e:
         db.rollback()
-        raise HTTPException(400, str(e))
+        raise e.http()
     db.commit()
     return product_out(p, user)
 
@@ -382,7 +382,7 @@ def update_serial(serial_id: int, data: SerialUpdateIn, db: Session = Depends(ge
         db.commit()
     except BusinessError as e:
         db.rollback()
-        raise HTTPException(400, str(e))
+        raise e.http()
     return serial_out(s)
 
 

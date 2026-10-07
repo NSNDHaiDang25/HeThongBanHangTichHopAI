@@ -68,6 +68,7 @@ def test_import_missing_columns(client, owner_h):
 
 
 # ---------------- /api/inventory/* ----------------
+# TC-STK-04 (SRS 11.3)
 def test_inventory_adjust_and_movements(client, owner_h, staff_h):
     pid = product_id(client, owner_h, "PK001")
     r = client.post("/api/inventory/adjust", json={"product_id": pid, "new_stock": 9, "note": "Kiểm kê cuối tháng"}, headers=owner_h)
@@ -85,6 +86,7 @@ def test_inventory_low_stock_for_staff(client, staff_h):
 
 
 # ---------------- /api/export/* ----------------
+# TC-EXP-01 (SRS 11.3)
 def test_export_paths(client, owner_h, staff_h):
     r = client.get("/api/export/revenue", params={"format": "csv"}, headers=owner_h)
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")

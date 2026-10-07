@@ -31,14 +31,15 @@ def test_discount_percent(client, staff_h):
 def test_discount_greater_than_subtotal_rejected(client, staff_h):
     pk3 = product_id(client, staff_h, "PK003")
     r = make_invoice(client, staff_h, [{"product_id": pk3, "quantity": 1}], discount=500_000)
-    assert r.status_code == 400
+    assert r.status_code == 409
     assert stock_of(client, staff_h, "PK003") == 50  # rollback, không trừ kho
 
 
+# TC-SAL-02 (SRS 11.3)
 def test_insufficient_stock_rejected_and_nothing_changes(client, staff_h):
     pk1, pk3 = product_id(client, staff_h, "PK001"), product_id(client, staff_h, "PK003")
     r = make_invoice(client, staff_h, [{"product_id": pk3, "quantity": 1}, {"product_id": pk1, "quantity": 13}])
-    assert r.status_code == 400
+    assert r.status_code == 409
     assert "không đủ tồn kho" in r.json()["detail"]
     assert stock_of(client, staff_h, "PK003") == 50  # dòng hợp lệ trước đó cũng không bị trừ
 
@@ -46,12 +47,12 @@ def test_insufficient_stock_rejected_and_nothing_changes(client, staff_h):
 def test_duplicate_lines_are_merged_for_stock_check(client, staff_h):
     pk1 = product_id(client, staff_h, "PK001")
     r = make_invoice(client, staff_h, [{"product_id": pk1, "quantity": 7}, {"product_id": pk1, "quantity": 6}])
-    assert r.status_code == 400  # 7 + 6 = 13 > 12
+    assert r.status_code == 409  # 7 + 6 = 13 > 12
 
 
 def test_out_of_stock_product_cannot_be_sold(client, staff_h):
     pk2 = product_id(client, staff_h, "PK002")
-    assert make_invoice(client, staff_h, [{"product_id": pk2, "quantity": 1}]).status_code == 400
+    assert make_invoice(client, staff_h, [{"product_id": pk2, "quantity": 1}]).status_code == 409
 
 
 def test_invalid_quantity_rejected(client, staff_h):
@@ -60,6 +61,7 @@ def test_invalid_quantity_rejected(client, staff_h):
     assert make_invoice(client, staff_h, []).status_code == 422
 
 
+# TC-SAL-08 (SRS 11.3)
 def test_staff_cancel_of_paid_invoice_needs_owner_approval(client, staff_h, owner_h):
     """FR-SAL-10: nhân viên gửi yêu cầu hủy hóa đơn đã thanh toán, chủ cửa hàng duyệt."""
     pk1 = product_id(client, staff_h, "PK001")
@@ -84,6 +86,7 @@ def test_owner_can_reject_cancel_request(client, staff_h, owner_h):
     assert r.json()["status"] == "paid" and r.json()["cancel_requested_at"] is None
 
 
+# FR-SAL-13
 def test_staff_only_sees_own_invoices(client, staff_h, owner_h):
     pk1 = product_id(client, owner_h, "PK001")
     make_invoice(client, owner_h, [{"product_id": pk1, "quantity": 1}])
@@ -92,10 +95,11 @@ def test_staff_only_sees_own_invoices(client, staff_h, owner_h):
     assert client.get("/api/invoices", headers=staff_h).json()["total"] == 1
 
 
+# TC-AUT-02 (SRS 11.3)
 def test_staff_cannot_see_cost_price(client, staff_h, owner_h):
     staff_view = client.get("/api/products", params={"q": "PK001"}, headers=staff_h).json()["items"][0]
     owner_view = client.get("/api/products", params={"q": "PK001"}, headers=owner_h).json()["items"][0]
-    assert staff_view["cost_price"] is None
+    assert "cost_price" not in staff_view
     assert owner_view["cost_price"] == 220_000
 
 
@@ -103,6 +107,7 @@ def test_requires_login(client):
     assert client.get("/api/invoices").status_code == 401
 
 
+# FR-SAL-13
 def test_filter_invoices_by_status(client, owner_h):
     pk1 = product_id(client, owner_h, "PK001")
     a = make_invoice(client, owner_h, [{"product_id": pk1, "quantity": 1}]).json()

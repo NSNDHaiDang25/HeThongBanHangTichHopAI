@@ -17,6 +17,7 @@ def legacy_hash(password, salt="ab" * 16):
     return f"pbkdf2${salt}${digest}"
 
 
+# FR-AUT-02
 def test_hash_password_uses_bcrypt():
     h = hash_password("owner123")
     assert h.startswith("$2b$")

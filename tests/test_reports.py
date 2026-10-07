@@ -10,6 +10,7 @@ def sell(client, h, items, **extra):
     return r.json()
 
 
+# TC-RPT-01 (SRS 11.3)
 def test_revenue_excludes_cancelled_invoices(client, owner_h):
     pk1, pk3 = product_id(client, owner_h, "PK001"), product_id(client, owner_h, "PK003")
     sell(client, owner_h, [{"product_id": pk1, "quantity": 2}], discount=50_000)  # 650.000
@@ -30,6 +31,7 @@ def test_revenue_excludes_cancelled_invoices(client, owner_h):
     assert data["by_day"] == [{"date": today, "revenue": 1_220_000, "invoice_count": 2}]
 
 
+# TC-RPT-03, FR-RPT-03 (SRS 11.3)
 def test_top_and_slow_products(client, owner_h):
     pk1, pk3 = product_id(client, owner_h, "PK001"), product_id(client, owner_h, "PK003")
     sell(client, owner_h, [{"product_id": pk3, "quantity": 5}])
@@ -50,6 +52,7 @@ def test_monthly_report_has_12_months(client, owner_h):
     assert months[date.today().month - 1]["revenue"] == 350_000
 
 
+# FR-RPT-01
 def test_dashboard_lists_low_stock(client, owner_h):
     d = client.get("/api/reports/dashboard", headers=owner_h).json()
     assert "PK002" in [p["code"] for p in d["low_stock"]]
@@ -66,6 +69,7 @@ def test_invalid_date_returns_400(client, owner_h):
     assert r.status_code == 400
 
 
+# TC-EXP-01, TC-EXP-02 (SRS 11.3)
 def test_export_formats(client, owner_h):
     pk1 = product_id(client, owner_h, "PK001")
     sell(client, owner_h, [{"product_id": pk1, "quantity": 1}])

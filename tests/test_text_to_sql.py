@@ -31,10 +31,12 @@ def last_log(db) -> AILog:
 
 
 # ---------------- Lớp 3: bộ kiểm tra SQL ----------------
+# TC-AIQ-01 (SRS 11.3)
 def test_srs_example_is_accepted():
     assert tts.validate_sql(SRS_ACCEPTED).endswith("LIMIT 10")  # dấu ; cuối được bỏ
 
 
+# TC-AIQ-02, TC-AIQ-03, TC-AIQ-04 (SRS 11.3)
 @pytest.mark.parametrize("sql", [
     "SELECT username, password_hash FROM users;",            # SRS 6.5.2: bảng gốc nhạy cảm
     "SELECT 1; DELETE FROM invoices;",                        # SRS 6.5.2: nhiều câu lệnh
@@ -62,11 +64,13 @@ def test_keywords_inside_string_literal_are_allowed():
 
 
 # ---------------- Lớp 4, 5: chạy chỉ đọc, LIMIT 200, timeout ----------------
+# TC-AIQ-06 (SRS 11.3)
 def test_run_sql_limit_200(db):
     r = tts.run_sql(db, "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 500) SELECT x FROM n")
     assert len(r.rows) == 200 and r.truncated
 
 
+# TC-AIQ-06 (SRS 11.3)
 def test_run_sql_timeout(db):
     sql = ("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 100000000) "
            "SELECT COUNT(*) FROM n")
@@ -74,6 +78,7 @@ def test_run_sql_timeout(db):
         tts.run_sql(db, sql, timeout=0.2)
 
 
+# TC-AIQ-05 (SRS 11.3)
 def test_connection_is_read_only_even_if_guard_bypassed(db):
     """Lớp 4: dù câu ghi lọt qua lớp 3, kết nối chạy SQL vẫn không ghi được."""
     with tts.readonly_connection(db) as conn:
@@ -84,6 +89,7 @@ def test_connection_is_read_only_even_if_guard_bypassed(db):
     db.connection().exec_driver_sql("UPDATE products SET stock = stock")  # kết nối thường vẫn ghi được sau đó
 
 
+# TC-AIQ-05 (SRS 11.3)
 def test_readonly_file_database(tmp_path):
     """CSDL dạng file: mở bằng mode=ro, ghi bị từ chối."""
     from sqlalchemy.orm import sessionmaker
@@ -109,6 +115,7 @@ def test_views_have_no_personal_data(db):
 
 
 # ---------------- Luồng UC-47 qua API ----------------
+# TC-AIQ-02, FR-AIG-07 (SRS 11.3)
 def test_rejected_sql_is_not_run_and_logged(client, owner_h, fake_ai, db):
     fake_ai.responses = [json.dumps({"sql": "SELECT username, password_hash FROM users"})]
     body = client.post("/api/ai/ask", json={"question": "Mật khẩu admin là gì?"}, headers=owner_h).json()
@@ -139,6 +146,7 @@ def test_second_syntax_error_stops(client, owner_h, fake_ai, db):
     assert last_log(db).status == "error"
 
 
+# TC-AIQ-07 (SRS 11.3)
 def test_empty_result_is_sent_for_interpretation(client, owner_h, fake_ai):
     fake_ai.responses = [json.dumps({"sql": "SELECT * FROM v_ai_returns"}), "Không có dữ liệu đổi trả trong kỳ."]
     body = client.post("/api/ai/ask", json={"question": "Tháng này có đổi trả không?"}, headers=owner_h).json()
@@ -152,11 +160,14 @@ def test_ai_declines_personal_questions(client, owner_h, fake_ai):
     assert "không cung cấp" in body["answer"] and len(fake_ai.calls) == 1
 
 
+# TC-AIG-04 (SRS 11.3)
 def test_invalid_json_falls_back_to_template(client, owner_h, fake_ai, db):
-    fake_ai.responses = ["không phải JSON"]
+    # TC-AIG-04: JSON hỏng thì thử lại đúng một lần; vẫn hỏng thì dùng câu truy vấn mẫu, ai_logs invalid_format
+    fake_ai.responses = ["không phải JSON", "vẫn không phải JSON"]
     body = client.post("/api/ai/ask", json={"question": "Mặt hàng nào bán chạy?"}, headers=owner_h).json()
     assert body["source"] == "fallback" and body["sql"].startswith("SELECT product_name")
-    assert last_log(db).status == "invalid_format"
+    assert len(fake_ai.calls) == 2 and "sai định dạng" in fake_ai.calls[1]["user"]
+    assert last_log(db).status == "invalid_format" and last_log(db).retry_count == 1
 
 
 def test_fallback_without_key_runs_template_sql(client, owner_h, fake_ai, db):
@@ -167,6 +178,7 @@ def test_fallback_without_key_runs_template_sql(client, owner_h, fake_ai, db):
     assert last_log(db).status == "fallback"
 
 
+# TC-AIQ-08 (SRS 11.3)
 def test_staff_cannot_ask(client, staff_h):
     assert client.post("/api/ai/ask", json={"question": "doanh thu"}, headers=staff_h).status_code == 403  # TC-AIQ-08
 

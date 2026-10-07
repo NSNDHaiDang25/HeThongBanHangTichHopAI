@@ -383,7 +383,7 @@ def _guide_sections() -> list[tuple[str, str]]:
 
 
 @tool("app_guide", "Hướng dẫn sử dụng",
-      "Tra cứu hướng dẫn sử dụng phần mềm SalesAI: bán hàng, thanh toán, quét QR, hủy/sửa hóa đơn, nhập hàng, "
+      "Tra cứu hướng dẫn sử dụng phần mềm TechStoreAI: bán hàng, thanh toán, quét QR, hủy/sửa hóa đơn, nhập hàng, "
       "kiểm kho, sản phẩm, khách hàng, báo cáo, xuất file, phân quyền, các chức năng AI.",
       params={"topic": {"type": "STRING", "description": "Chủ đề cần hướng dẫn, VD: 'hủy hóa đơn', 'nhập hàng'"}},
       required=("topic",))

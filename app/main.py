@@ -3,9 +3,10 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app import errors
 from app.config import settings
 from app.database import engine, ensure_schema
 from app.routers import (aftersales, ai, auth, catalog, customers, inventory, invoices, loyalty, payments, product_import,
@@ -37,7 +38,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="TechStore AI - Hệ thống quản lý bán hàng tích hợp AI",
+    title="TechStoreAI - Hệ thống quản lý bán hàng tích hợp AI",
     version="1.0.0",
     description="Quản lý sản phẩm, khách hàng, hóa đơn, nhập hàng, tồn kho, báo cáo và trợ lý AI (Gemini).",
     lifespan=lifespan,
@@ -55,9 +56,7 @@ async def remember_client_ip(request: Request, call_next):
         client_ip.reset(token)
 
 
-@app.exception_handler(ValueError)
-async def value_error_handler(_: Request, exc: ValueError):
-    return JSONResponse(status_code=400, content={"detail": str(exc)})
+errors.install(app)  # cấu trúc lỗi chung {"error": {"code", "message", "details"}} theo SRS 8.4.1
 
 
 # product_import đứng trước catalog để /api/products/import-template không bị hiểu là /api/products/{product_id}

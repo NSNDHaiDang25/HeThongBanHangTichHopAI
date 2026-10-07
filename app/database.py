@@ -28,6 +28,19 @@ def make_engine(url: str, **kwargs):
     return engine
 
 
+def lock_for_write(db) -> None:
+    """Giành khóa ghi của SQLite ngay đầu giao dịch (FR-SAL-12, NFR 7.6).
+
+    Mã chứng từ (HD-yyyyMMdd-nnnn...) lấy số lớn nhất đã dùng cộng 1. Nếu hai quầy cùng đọc số lớn nhất rồi mới
+    ghi thì trùng mã. Một câu UPDATE không đổi dòng nào làm driver mở giao dịch và SQLite cấp khóa RESERVED ngay,
+    quầy sau chờ (busy_timeout 5 giây) đến khi quầy trước commit rồi mới đọc, nên mã luôn tăng dần, không trùng.
+    CSDL khác SQLite đã có ràng buộc UNIQUE và cơ chế thử lại ở router nên không cần bước này.
+    """
+    bind = db.get_bind()
+    if bind.dialect.name == "sqlite":
+        db.execute(text("UPDATE products SET id = id WHERE 1 = 0"))
+
+
 engine = make_engine(settings.DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 

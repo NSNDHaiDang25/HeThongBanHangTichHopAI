@@ -113,9 +113,10 @@ def get_current_user(
 
 
 def require_roles(*roles: str):
-    """Dependency kiểm tra vai trò. Admin luôn có toàn quyền."""
+    """Dependency kiểm tra vai trò. Ba vai trò độc lập, không kế thừa quyền của nhau (SRS bảng 4.2):
+    quản trị viên không bán hàng, không xem giá vốn và doanh thu, chỉ gọi được API ghi rõ "admin"."""
     def checker(user: User = Depends(get_current_user)) -> User:
-        if user.role != "admin" and user.role not in roles:
+        if user.role not in roles:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Bạn không có quyền thực hiện chức năng này")
         return user
     return checker
@@ -124,4 +125,6 @@ def require_roles(*roles: str):
 # Nhóm quyền dùng chung
 ALL_STAFF = require_roles("owner", "staff")
 MANAGERS = require_roles("owner")
-ADMIN_ONLY = require_roles()
+ADMIN_ONLY = require_roles("admin")
+ADMIN_OR_OWNER = require_roles("admin", "owner")
+ANY_ROLE = require_roles("admin", "owner", "staff")

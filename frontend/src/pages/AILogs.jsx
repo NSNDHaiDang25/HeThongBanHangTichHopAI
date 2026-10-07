@@ -7,7 +7,7 @@ import Icon from '../ui/Icon.jsx'
 import { Badge, Empty, ErrorBox, Loading, Pager, useLoad } from '../ui/kit.jsx'
 import { Kpi } from './Dashboard.jsx'
 
-const FEATURE = { assistant: 'Trợ lý đa năng', advisor: 'Tư vấn sản phẩm', report: 'Báo cáo doanh thu', qa: 'Hỏi đáp dữ liệu' }
+const FEATURE = { assistant: 'Trợ lý đa năng', advisor: 'Tư vấn sản phẩm', cross_sell: 'Gợi ý phụ kiện', report: 'Báo cáo doanh thu', qa: 'Hỏi đáp dữ liệu' }
 const STATUS = {
   success: ['Thành công', 'green'], fallback: ['Dự phòng', 'yellow'], timeout: ['Quá thời gian', 'red'],
   rate_limited: ['Hết lượt', 'red'], invalid_format: ['Sai định dạng', 'red'], rejected_sql: ['SQL bị chặn', 'red'], error: ['Lỗi', 'red'],

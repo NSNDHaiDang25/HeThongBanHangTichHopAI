@@ -10,6 +10,7 @@ def new_customer(client, h, **kw):
     return r.json()
 
 
+# FR-CUS-01
 def test_staff_can_edit_customer(client, staff_h):
     c = new_customer(client, staff_h, phone="0911111111")
     r = client.put(f"/api/customers/{c['id']}", json={"name": "Khách đã sửa", "phone": "0922222222", "group": "vip"},
@@ -42,6 +43,7 @@ def test_cannot_delete_customer_with_invoices(client, owner_h):
     assert r.status_code == 400 and "đã có hóa đơn" in r.text
 
 
+# FR-CUS-01, BR-40
 def test_phone_must_be_10_digits_starting_with_0(client, owner_h):
     for phone in ("4358475875845", "901234567", "09012345678", "1901234567", "09012a4567", "+84901234567"):
         r = client.post("/api/customers", json={"name": "Khách thử", "phone": phone}, headers=owner_h)

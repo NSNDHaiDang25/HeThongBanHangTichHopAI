@@ -4,7 +4,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app.database import get_db
+from app.database import get_db, lock_for_write
 from app.models import ImportItem, ImportReceipt, Supplier, User
 from app.schemas import CancelIn, PurchaseOrderIn, SupplierIn
 from app.security import ALL_STAFF, MANAGERS
@@ -125,12 +125,13 @@ def _load(db: Session, po_id: int) -> ImportReceipt:
 
 def _run(db: Session, fn, *args):
     try:
+        lock_for_write(db)  # mã chứng từ không trùng khi nhiều quầy ghi cùng lúc (FR-SAL-12)
         result = fn(*args)
         db.commit()
         return result
     except BusinessError as e:
         db.rollback()
-        raise HTTPException(400, str(e))
+        raise e.http()
     except IntegrityError:
         db.rollback()
         raise HTTPException(400, "Serial hoặc mã chứng từ bị trùng, vui lòng thử lại")

@@ -1,5 +1,5 @@
 /* ============================================================
-   SalesAI - hệ thống giao diện dùng chung: nền kem, navy chủ đạo, cyan điểm nhấn
+   TechStoreAI - hệ thống giao diện dùng chung: nền kem, navy chủ đạo, cyan điểm nhấn
    Mọi màu, bo góc, chiều cao điều khiển lấy từ biến bên dưới để các trang
    hiển thị đồng nhất, không có màu viết cứng trong từng thành phần.
 
@@ -510,6 +510,9 @@ tr.clickable:hover td { background: var(--hover); }
 .cart-items { max-height: 280px; overflow-y: auto; margin: 0 calc(var(--card-pad) * -1); padding: 0 var(--card-pad); }
 .cart-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
 .cart-row:last-child { border-bottom: 0; }
+/* Hàng thứ hai của dòng giỏ: thành tiền nằm dưới tên, nút bỏ dòng dưới ô số lượng (không đè lên nhau) */
+.cart-row > .num { grid-column: 2; }
+.cart-row > .btn.icon-only:last-child { grid-column: 3; justify-self: end; }
 .cart-row .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cart-row .line { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-1); }
 .cart-row .thumb { width: 40px; height: 40px; }
@@ -565,6 +568,12 @@ tr.clickable:hover td { background: var(--hover); }
 .chip:hover { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
 .ai-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-3); font-size: var(--fs-xs); }
 .note { display: flex; gap: var(--space-2); align-items: flex-start; font-size: var(--fs-sm); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning-text); margin-top: var(--space-2); }
+/* Gợi ý phụ kiện đi kèm ở giỏ hàng (FR-AIA-07) */
+.cross-sell { background: var(--primary-soft); margin-top: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: var(--fs-sm); }
+.cross-sell-head { display: flex; align-items: flex-start; gap: var(--space-2); }
+.cross-sell-head .i { flex: none; margin-top: 2px; color: var(--primary, currentColor); }
+.cross-sell-item { display: flex; align-items: center; gap: var(--space-2); padding-top: var(--space-2); margin-top: var(--space-2); border-top: 1px solid var(--border); }
+.cross-sell-item > div { flex: 1; min-width: 0; }
 .note .i { width: 16px; height: 16px; margin-top: 2px; }
 .markdown { line-height: 1.65; }
 .markdown h2 { font-size: var(--fs-lg); margin: var(--space-5) 0 var(--space-2); color: var(--primary); }

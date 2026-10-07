@@ -18,7 +18,16 @@ from app.schemas import ImportIn, InvoiceIn, NewProductIn
 
 
 class BusinessError(Exception):
-    """Lỗi nghiệp vụ, router chuyển thành HTTP 400."""
+    """Lỗi nghiệp vụ. Router chuyển thành HTTP 409 (xung đột nghiệp vụ, SRS bảng 8.12) kèm mã lỗi ổn định
+    (OUT_OF_STOCK, RETURN_WINDOW_EXPIRED...) theo cấu trúc lỗi chung ở mục 8.4.1."""
+
+    def __init__(self, message: str, code: str = "BUSINESS_RULE", status: int = 409, details: dict | None = None):
+        super().__init__(message)
+        self.code, self.status, self.details = code, status, details
+
+    def http(self):
+        from app.errors import APIError
+        return APIError(self.status, str(self), self.code, self.details)
 
 
 def change_stock(db: Session, product: Product, delta: int, type_: str, ref: str | None,
@@ -31,7 +40,8 @@ def change_stock(db: Session, product: Product, delta: int, type_: str, ref: str
     result = db.execute(stmt.execution_options(synchronize_session=False))
     if result.rowcount != 1:
         current = db.scalar(select(Product.stock).where(Product.id == product.id))
-        raise BusinessError(f"Sản phẩm '{product.name}' không đủ tồn kho (còn {current}, cần {-delta})")
+        raise BusinessError(f"Sản phẩm '{product.name}' không đủ tồn kho (còn {current}, cần {-delta})", "OUT_OF_STOCK",
+                            details={"product_id": product.id, "available": current, "requested": -delta})
     new_stock = db.scalar(select(Product.stock).where(Product.id == product.id))
     set_committed_value(product, "stock", new_stock)
     db.add(StockMovement(
@@ -45,7 +55,7 @@ def _lock_products(db: Session, product_ids) -> dict[int, Product]:
     found = {p.id: p for p in products}
     missing = set(product_ids) - found.keys()
     if missing:
-        raise BusinessError(f"Không tìm thấy sản phẩm id {sorted(missing)}")
+        raise BusinessError(f"Không tìm thấy sản phẩm id {sorted(missing)}", "NOT_FOUND", 404)
     return found
 
 

@@ -27,12 +27,12 @@ class Settings:
     AI_MAX_RETRIES: int = int(os.getenv("AI_MAX_RETRIES", "2"))
     ADVISOR_PROMPT_VERSION: str = os.getenv("ADVISOR_PROMPT_VERSION", "v3")
 
-    SHOP_NAME: str = os.getenv("SHOP_NAME", "Cửa hàng SalesAI")
+    SHOP_NAME: str = os.getenv("SHOP_NAME", "Cửa hàng TechStoreAI")
     # Tài khoản nhận chuyển khoản (VietQR). BIN ngân hàng: https://api.vietqr.io/v2/banks
     VIETQR_BANK_BIN: str = os.getenv("VIETQR_BANK_BIN", "970436")
     VIETQR_BANK_NAME: str = os.getenv("VIETQR_BANK_NAME", "Vietcombank")
     VIETQR_ACCOUNT_NO: str = os.getenv("VIETQR_ACCOUNT_NO", "0123456789")
-    VIETQR_ACCOUNT_NAME: str = os.getenv("VIETQR_ACCOUNT_NAME", "CUA HANG SALESAI")
+    VIETQR_ACCOUNT_NAME: str = os.getenv("VIETQR_ACCOUNT_NAME", "CUA HANG TECHSTOREAI")
 
     # Quản trị viên quên mật khẩu: mã xác nhận gửi tới ADMIN_EMAIL.
     # Gửi qua Resend (HTTPS) nếu có RESEND_API_KEY, ngược lại qua SMTP (Gmail + mật khẩu ứng dụng).

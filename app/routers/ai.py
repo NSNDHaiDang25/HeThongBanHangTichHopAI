@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -6,16 +6,16 @@ from app.ai import assistant, history, service
 from app.ai.client import GeminiClient, get_ai_client
 from app.database import get_db
 from app.models import ChatSession, User
-from app.schemas import AIReportIn, ChatIn, QuestionIn, SessionRename
-from app.security import ALL_STAFF, MANAGERS
-from app.services import ai_log, app_settings
+from app.schemas import AIReportIn, AIReportPdfIn, ChatIn, CrossSellIn, QuestionIn, SessionRename
+from app.security import ALL_STAFF, ANY_ROLE, MANAGERS
+from app.services import ai_log, app_settings, export
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
 
 @router.get("/status")
 def ai_status(db: Session = Depends(get_db), client: GeminiClient = Depends(get_ai_client),
-              _: User = Depends(ALL_STAFF)):
+              _: User = Depends(ANY_ROLE)):
     """model = model đang dùng được (None nếu mọi model đều đang hết lượt); models = tình trạng từng model.
     switched_on = quản trị viên đang bật AI (ai_enabled); enabled = đã cấu hình khóa API."""
     info = client.status() if client.enabled else {"active_model": None, "models": []}
@@ -28,7 +28,7 @@ def ai_status(db: Session = Depends(get_db), client: GeminiClient = Depends(get_
 @router.get("/logs")
 def ai_logs(feature: str | None = None, status: str | None = None, user_id: int | None = None,
             page: int = Query(1, ge=1), size: int = Query(50, ge=1, le=200),
-            db: Session = Depends(get_db), user: User = Depends(ALL_STAFF)):
+            db: Session = Depends(get_db), user: User = Depends(ANY_ROLE)):
     """Nhật ký gọi AI. Quản trị viên, chủ cửa hàng xem tất cả; nhân viên chỉ xem lượt của mình."""
     return ai_log.list_logs(db, user, feature, status, user_id, page, size)
 
@@ -67,6 +67,17 @@ def advisor(data: ChatIn, version: str | None = Query(None, pattern="^v[123]$"),
     return {**result, "session_id": session.id, "session_title": session.title, "message_id": reply.id}
 
 
+@router.post("/advisor/cross-sell")
+def advisor_cross_sell(data: CrossSellIn, db: Session = Depends(get_db),
+                       client: GeminiClient = Depends(ai_log.configured_client),
+                       user: User = Depends(ALL_STAFF), _: User = Depends(ai_log.ai_guard)):
+    """FR-AIA-07: gợi ý phụ kiện đi kèm dựa trên giỏ hàng hiện tại (màn hình bán hàng)."""
+    result = service.cross_sell(db, client, data.product_ids)
+    ai_log.record(db, user, "cross_sell", result.pop("question"), result, prompt_version="v1", model=client.model)
+    db.commit()
+    return result
+
+
 @router.post("/report")
 def ai_report(data: AIReportIn, db: Session = Depends(get_db), client: GeminiClient = Depends(ai_log.configured_client),
               user: User = Depends(MANAGERS), _: User = Depends(ai_log.ai_guard)):
@@ -75,6 +86,17 @@ def ai_report(data: AIReportIn, db: Session = Depends(get_db), client: GeminiCli
                   prompt_version="v1", model=client.model, response=result.get("markdown"))
     db.commit()
     return result
+
+
+@router.post("/report/pdf")
+def ai_report_pdf(data: AIReportPdfIn, db: Session = Depends(get_db), _: User = Depends(MANAGERS)):
+    """FR-AIR-06: xuất báo cáo AI đang xem ra PDF (nội dung đã lưu trong ai_logs khi sinh báo cáo)."""
+    store = app_settings.get(db, "store_name") or "TechStoreAI"
+    period = f"Kỳ {data.date_from or '?'} đến {data.date_to or '?'}" if (data.date_from or data.date_to) else ""
+    pdf = export.markdown_pdf(f"Báo cáo doanh thu - {store}", " · ".join(x for x in (period, "Nhận xét do AI soạn từ "
+                              "số liệu hệ thống tính sẵn") if x), data.markdown)
+    name = f"bao-cao-ai-{data.date_from or ''}-{data.date_to or ''}.pdf".replace("--", "-")
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.post("/ask")

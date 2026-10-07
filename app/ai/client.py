@@ -56,6 +56,7 @@ class AIResult:
     text: str
     model: str
     latency_ms: int
+    retries: int = 0  # số lần gọi thất bại trước khi có phản hồi (timeout, 429, 5xx...), ghi vào ai_logs.retry_count
 
 
 @dataclass
@@ -121,10 +122,10 @@ class GeminiClient:
         }
         if json_mode:
             body["generationConfig"]["responseMimeType"] = "application/json"
-        data, latency, model = self._post(body, feature, user)
+        data, latency, model, retries = self._post(body, feature, user)
         text = self._extract_text(data)
         self._log(feature, "ok", latency, user, text, model)
-        return AIResult(text=text, model=model, latency_ms=latency)
+        return AIResult(text=text, model=model, latency_ms=latency, retries=retries)
 
     def chat(self, system: str, contents: list[dict], *, tools: list[dict], temperature: float = 0.3,
              force_text: bool = False, feature: str = "unknown", model: str | None = None) -> ChatReply:
@@ -142,7 +143,7 @@ class GeminiClient:
         }
         preview = next((p.get("text", "") for c in reversed(contents) if c.get("role") == "user"
                         for p in c.get("parts", []) if "text" in p), "")
-        data, latency, used = self._post(body, feature, preview, only=model)
+        data, latency, used, _ = self._post(body, feature, preview, only=model)
         try:
             candidate = data["candidates"][0]
             content = candidate.get("content") or {}
@@ -160,8 +161,9 @@ class GeminiClient:
         return ChatReply(text=text, calls=calls, content={"role": "model", "parts": parts},
                          model=used, latency_ms=latency)
 
-    def _post(self, body: dict, feature: str, preview: str, only: str | None = None) -> tuple[dict, int, str]:
-        """Gửi request lần lượt tới các model còn lượt. Trả về (JSON phản hồi, độ trễ ms, model đã trả lời).
+    def _post(self, body: dict, feature: str, preview: str, only: str | None = None) -> tuple[dict, int, str, int]:
+        """Gửi request lần lượt tới các model còn lượt.
+        Trả về (JSON phản hồi, độ trễ ms, model đã trả lời, số lần gọi thất bại trước đó).
 
         - 429 hết lượt trong ngày: model nghỉ đến khi hạn mức làm mới, chuyển model kế tiếp (không thử lại).
         - 429 theo phút: model nghỉ đúng số giây Google yêu cầu, chuyển model kế tiếp.
@@ -178,6 +180,7 @@ class GeminiClient:
         headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
         started = time.perf_counter()
         last_error: AIError | None = None
+        failures = 0
 
         for model in candidates:
             url = GEMINI_URL.format(model=model)
@@ -191,24 +194,28 @@ class GeminiClient:
                         resp = self._send(url, headers, self._payload(body, model))
                 except httpx.TimeoutException:
                     last_error = AIError("AI phản hồi quá lâu (timeout)", "timeout")
+                    failures += 1
                     self._busy(model, last_error, feature, preview, started)
                     break
                 except httpx.HTTPError as e:
                     last_error = AIError(f"Không kết nối được AI: {e.__class__.__name__}", "error")
+                    failures += 1
                 else:
                     if resp.status_code == 200:
                         try:
                             data = resp.json()
                         except ValueError:
                             raise AIError("Phản hồi AI sai định dạng", "bad_response")
-                        return data, int((time.perf_counter() - started) * 1000), model
+                        return data, int((time.perf_counter() - started) * 1000), model, failures
                     if resp.status_code == 429:
                         last_error = self._on_quota(model, resp)
+                        failures += 1
                         self._log(feature, last_error.kind, 0, preview, str(last_error), model)
                         break  # thử lại cùng model chỉ tốn thêm lượt: chuyển model
                     if resp.status_code == 404:
                         self._rest(model, None, "gone")
                         last_error = AIError(f"Model {model} không còn dùng được: {self._error_message(resp)}", "config")
+                        failures += 1
                         self._log(feature, "fail", 0, preview, str(last_error), model)
                         break
                     if resp.status_code < 500:
@@ -223,9 +230,11 @@ class GeminiClient:
                         raise AIError(f"AI từ chối yêu cầu ({resp.status_code}): {msg}", "config")
                     if resp.status_code == 503:
                         last_error = AIError(f"Model {model} đang quá tải", "error")
+                        failures += 1
                         self._busy(model, last_error, feature, preview, started)
                         break
                     last_error = AIError(f"Máy chủ AI lỗi {resp.status_code}", "error")
+                    failures += 1
                 if attempt < self.max_retries:
                     time.sleep(min(2 ** attempt, 8))  # backoff 1s, 2s, 4s...
             else:

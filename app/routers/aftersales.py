@@ -5,7 +5,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app.database import get_db
+from app.database import get_db, lock_for_write
 from app.models import Customer, Invoice, InvoiceItem, Return, ReturnItem, User, Warranty, WarrantyTicket, now
 from app.schemas import ReturnIn, TicketIn, TicketUpdateIn
 from app.security import ALL_STAFF
@@ -19,12 +19,13 @@ router = APIRouter(prefix="/api", tags=["aftersales"])
 
 def _commit(db: Session, fn, *args):
     try:
+        lock_for_write(db)  # mã chứng từ không trùng khi nhiều quầy ghi cùng lúc (FR-SAL-12)
         result = fn(*args)
         db.commit()
         return result
     except BusinessError as e:
         db.rollback()
-        raise HTTPException(400, str(e))
+        raise e.http()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "Có thao tác khác vừa ghi cùng lúc, vui lòng thử lại")

@@ -10,6 +10,7 @@ def new_product(**kw):
     return {"code": "NEW01", "name": "Cáp sạc USB-C", "sale_price": 90_000, **kw}
 
 
+# FR-PRD-01
 def test_create_product_with_new_category_name(client, owner_h):
     r = client.post("/api/products", json=new_product(category_name="  Cáp   sạc "), headers=owner_h)
     assert r.status_code == 201, r.text
@@ -43,6 +44,7 @@ def test_failed_product_save_does_not_leave_new_category(client, owner_h):
     assert categories(client, owner_h) == before
 
 
+# FR-PRD-02
 def test_sale_price_must_be_positive(client, owner_h):
     for price in (0, -1000):
         r = client.post("/api/products", json=new_product(sale_price=price), headers=owner_h)
@@ -61,6 +63,7 @@ def test_delete_product_without_transactions(client, owner_h):
     assert client.get(f"/api/products/{pid}", headers=owner_h).status_code == 404
 
 
+# FR-PRD-04
 def test_delete_product_with_invoice_or_import_only_deactivates(client, owner_h):
     """SRS UC003 A3: đã có trong hóa đơn hoặc phiếu nhập thì không xóa cứng, chuyển sang ngừng kinh doanh."""
     pk1 = product_id(client, owner_h, "PK001")

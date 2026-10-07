@@ -35,6 +35,7 @@ def can_login(client, username, password):
     return client.post("/api/auth/login", json={"username": username, "password": password}).status_code == 200
 
 
+# TC-AUT-04 (SRS 11.3)
 def test_admin_resets_password_with_emailed_code(client, outbox):
     r = forgot(client)
     assert r.status_code == 200, r.text

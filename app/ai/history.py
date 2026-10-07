@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.models import ChatMessage, ChatSession, User, now
 
 KINDS = ("assistant", "advisor", "ask")
-CONTEXT_TURNS = 6  # số tin nhắn gần nhất gửi kèm cho AI làm ngữ cảnh
+CONTEXT_TURNS = 10  # FR-AIA-08: 5 lượt hỏi - đáp gần nhất (10 tin nhắn) gửi kèm cho AI làm ngữ cảnh
 
 
 class SessionNotFound(Exception):

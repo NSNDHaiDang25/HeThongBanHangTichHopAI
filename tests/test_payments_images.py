@@ -18,6 +18,7 @@ def sell(client, h, **extra):
 
 
 # ---------------- Phương thức thanh toán ----------------
+# TC-SAL-06 (SRS 11.3)
 def test_cash_payment_records_change(client, staff_h):
     r = sell(client, staff_h, payment_method="cash", cash_received=500_000)
     assert r.status_code == 201, r.text
@@ -28,13 +29,13 @@ def test_cash_payment_records_change(client, staff_h):
 
 def test_cash_less_than_total_rejected(client, staff_h):
     r = sell(client, staff_h, payment_method="cash", cash_received=300_000)
-    assert r.status_code == 400
+    assert r.status_code == 422
     assert "ít hơn" in r.json()["detail"]
     items = client.get("/api/products", params={"q": "PK001"}, headers=staff_h).json()["items"]
     assert items[0]["stock"] == 12  # rollback, không trừ kho
 
 
-@pytest.mark.parametrize("method,ref", [("card", "POS123456"), ("transfer", "SALESAI 2609231200"), ("qr", "SALESAI 2609231201")])
+@pytest.mark.parametrize("method,ref", [("card", "POS123456"), ("transfer", "TECHSTOREAI 2609231200"), ("qr", "TECHSTOREAI 2609231201")])
 def test_non_cash_methods_store_reference(client, staff_h, method, ref):
     inv = sell(client, staff_h, payment_method=method, payment_ref=ref, cash_received=999_999).json()
     assert inv["payment_method"] == ("card" if method == "card" else "bank_transfer")  # transfer, qr: tên cũ
@@ -47,16 +48,18 @@ def test_unknown_payment_method_rejected(client, staff_h):
 
 
 # ---------------- VietQR ----------------
+# TC-PAY-01 (SRS 11.3)
 def test_crc16_ccitt_known_vector():
     assert crc16_ccitt("123456789") == "29B1"
 
 
+# TC-PAY-01 (SRS 11.3)
 def test_vietqr_payload_structure():
-    payload = vietqr_payload("970436", "0123456789", 350000, "SALESAI HD001")
+    payload = vietqr_payload("970436", "0123456789", 350000, "TECHSTOREAI HD001")
     assert payload.startswith("000201010212")           # phiên bản + QR động (có số tiền)
     assert "0006970436" in payload and "01100123456789" in payload
     assert "5303704" in payload and "5406350000" in payload and "5802VN" in payload
-    assert "0813SALESAI HD001" in payload
+    assert "0817TECHSTOREAI HD001" in payload
     assert payload[-8:-4] == "6304" and payload[-4:] == crc16_ccitt(payload[:-4])
 
 
@@ -65,7 +68,7 @@ def test_transfer_content_is_ascii_and_short():
 
 
 def test_vietqr_endpoint(client, staff_h):
-    r = client.post("/api/payments/vietqr", json={"amount": 350000, "content": "SALESAI 1"}, headers=staff_h)
+    r = client.post("/api/payments/vietqr", json={"amount": 350000, "content": "TECHSTOREAI 1"}, headers=staff_h)
     assert r.status_code == 200
     body = r.json()
     assert body["svg"].startswith("<svg") and "width=" not in body["svg"].split(">")[0]
@@ -74,6 +77,7 @@ def test_vietqr_endpoint(client, staff_h):
 
 
 # ---------------- Quét mã & tem QR ----------------
+# FR-SAL-01
 def test_lookup_by_code_is_case_insensitive(client, staff_h):
     r = client.get("/api/products/by-code/ pk001 ", headers=staff_h)
     assert r.status_code == 200 and r.json()["code"] == "PK001"

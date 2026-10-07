@@ -12,6 +12,7 @@ from tests.helpers import product_id
 
 
 # ---------------- Chatbot tư vấn ----------------
+# TC-AIA-03 (SRS 11.3)
 def test_advisor_v3_sends_only_in_stock_products(client, staff_h, fake_ai):
     fake_ai.response = json.dumps({"answer": "Gợi ý A1", "suggestions": [{"code": "PK001", "reason": "Pin 20 giờ"}]})
     r = client.post("/api/ai/advisor?version=v3", json={"message": "tai nghe dưới 500k pin lâu"}, headers=staff_h)
@@ -24,6 +25,7 @@ def test_advisor_v3_sends_only_in_stock_products(client, staff_h, fake_ai):
     assert fake_ai.calls[0]["json_mode"] is True
 
 
+# TC-AIA-04 (SRS 11.3)
 def test_advisor_removes_out_of_stock_and_unknown_suggestions(client, staff_h, fake_ai):
     fake_ai.response = json.dumps({"answer": "...", "suggestions": [
         {"code": "PK002", "reason": "chống ồn"},     # hết hàng
@@ -50,6 +52,7 @@ def test_advisor_handles_malformed_response(client, staff_h, fake_ai):
     assert body["removed"] == ["PK002"]
 
 
+# TC-AIA-05 (SRS 11.3)
 @pytest.mark.parametrize("kind", ["timeout", "rate_limit", "bad_response"])
 def test_advisor_falls_back_on_ai_error(client, staff_h, fake_ai, kind):
     fake_ai.response = AIError("lỗi giả lập", kind)
@@ -61,6 +64,7 @@ def test_advisor_falls_back_on_ai_error(client, staff_h, fake_ai, kind):
     assert "PK002" not in codes and "PK001" in codes
 
 
+# TC-AIA-05 (SRS 11.3)
 def test_fallback_when_ai_disabled(client, staff_h, fake_ai):
     fake_ai.enabled = False
     body = client.post("/api/ai/advisor", json={"message": "sạc điện thoại"}, headers=staff_h).json()
@@ -93,9 +97,11 @@ def sell(client, h, code, qty):
     client.post("/api/invoices", json={"items": [{"product_id": pid, "quantity": qty}], "customer_id": 1}, headers=h)
 
 
+# TC-AIR-03 (SRS 11.3)
 def test_ai_report_does_not_leak_customer_pii(client, owner_h, fake_ai):
     sell(client, owner_h, "PK001", 2)
-    fake_ai.response = "## Tổng quan\nDoanh thu tốt."
+    fake_ai.response = ("## Tổng quan\nDoanh thu tốt.\n## Điểm đáng chú ý\n- A1 bán chạy\n"
+                        "## Rủi ro tồn kho\n- Ổn\n## Khuyến nghị nhập hàng\n- Nhập thêm A1")
     body = client.post("/api/ai/report", json={}, headers=owner_h).json()
     assert body["source"] == "ai"
     assert body["markdown"].startswith("## Tổng quan")
@@ -104,6 +110,7 @@ def test_ai_report_does_not_leak_customer_pii(client, owner_h, fake_ai):
     assert "700000" in prompt  # số liệu doanh thu có trong dữ liệu gửi đi
 
 
+# TC-AIR-01 (SRS 11.3)
 def test_ai_report_falls_back_on_bad_format(client, owner_h, fake_ai):
     sell(client, owner_h, "PK001", 1)
     fake_ai.response = "ok"  # không có tiêu đề Markdown
@@ -126,6 +133,7 @@ def test_ai_report_fallback_on_timeout(client, owner_h, fake_ai):
 
 
 # ---------------- Hỏi đáp dữ liệu ----------------
+# TC-AIQ-01 (SRS 11.3)
 def test_ask_data_uses_system_data(client, owner_h, fake_ai):
     """UC-47: AI sinh SQL trên view, hệ thống chạy rồi gửi bảng kết quả cho AI diễn giải."""
     sell(client, owner_h, "PK003", 4)
@@ -172,6 +180,7 @@ def test_parse_budget(text, budget):
     assert service.parse_budget(text) == budget
 
 
+# FR-AIG-01
 def test_prompt_files_render():
     for name in ["product_advisor_v1", "product_advisor_v2", "product_advisor_v3", "sales_report", "sales_qa", "sales_sql", "sales_qa_context"]:
         system, user = load_prompt(name)
@@ -208,6 +217,7 @@ def test_gemini_client_rate_limit_switches_model_without_retrying(monkeypatch):
     assert calls == ["m", "m2"]  # 429 không thử lại cùng model (chỉ tốn thêm lượt), chuyển model ngay
 
 
+# TC-AIG-02 (SRS 11.3)
 def test_gemini_client_timeout(monkeypatch):
     monkeypatch.setattr("app.ai.client.time.sleep", lambda s: None)
     monkeypatch.setattr("app.ai.client.GeminiClient._log", staticmethod(lambda *a: None))
@@ -220,6 +230,7 @@ def test_gemini_client_timeout(monkeypatch):
     assert e.value.kind == "timeout"
 
 
+# TC-AIG-04 (SRS 11.3)
 def test_gemini_client_bad_format(monkeypatch):
     monkeypatch.setattr("app.ai.client.GeminiClient._log", staticmethod(lambda *a: None))
     with pytest.raises(AIError) as e:

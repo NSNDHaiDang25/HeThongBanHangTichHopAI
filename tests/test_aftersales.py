@@ -18,6 +18,7 @@ def line(inv, code):
 
 
 # ---------------------------------------------------------------- Đổi trả
+# TC-RET-01 (SRS 11.3)
 def test_return_headset_matches_srs_example(client, staff_h, owner_h, sample):
     """SRS 3.4: trả tai nghe trong 24 giờ hoàn 1.155.831 đồng, trừ 138 điểm, điểm đã dùng không hoàn."""
     inv = checkout_sample(client, staff_h, sample)
@@ -40,13 +41,14 @@ def test_return_headset_matches_srs_example(client, staff_h, owner_h, sample):
     assert s["summary"]["refunds"] == 1_155_831 and s["summary"]["revenue"] == 17_590_000 - 1_155_831
 
 
+# TC-RET-05 (SRS 11.3)
 def test_cannot_return_more_than_bought_or_twice(client, staff_h, sample):
     inv = checkout_sample(client, staff_h, sample)
     mouse = line(inv, "CH-M331")
     body = {"invoice_id": inv["id"], "reason": "Khách đổi ý không dùng"}
     too_many = client.post("/api/returns", json={**body, "items": [{"invoice_item_id": mouse["id"], "quantity": 3}]},
                            headers=staff_h)
-    assert too_many.status_code == 400 and "tối đa 2" in too_many.json()["detail"]
+    assert too_many.status_code == 409 and "tối đa 2" in too_many.json()["detail"]
     a = client.post("/api/returns", json={**body, "items": [{"invoice_item_id": mouse["id"], "quantity": 1}]},
                     headers=staff_h).json()
     b = client.post("/api/returns", json={**body, "items": [{"invoice_item_id": mouse["id"], "quantity": 1}]},
@@ -54,9 +56,10 @@ def test_cannot_return_more_than_bought_or_twice(client, staff_h, sample):
     assert a["refund_amount"] + b["refund_amount"] == 563_346  # lũy kế đúng cột 'Còn lại'
     again = client.post("/api/returns", json={**body, "items": [{"invoice_item_id": mouse["id"], "quantity": 1}]},
                         headers=staff_h)
-    assert again.status_code == 400
+    assert again.status_code == 409
 
 
+# TC-RET-02 (SRS 11.3)
 def test_return_window_and_status_rules(client, staff_h, sample, db):
     pending = sell(client, staff_h, sample["items"][:1], payment_method="bank_transfer").json()
     r = client.get(f"/api/returns/eligible/{pending['id']}", headers=staff_h).json()
@@ -68,9 +71,10 @@ def test_return_window_and_status_rules(client, staff_h, sample, db):
     r = client.post("/api/returns", json={"invoice_id": inv["id"], "reason": "Máy bị lỗi màn hình",
                                          "items": [{"invoice_item_id": inv["items"][0]["id"], "quantity": 1}]},
                     headers=staff_h)
-    assert r.status_code == 400 and "bảo hành" in r.json()["detail"]
+    assert r.status_code == 409 and "bảo hành" in r.json()["detail"]
 
 
+# TC-RET-04 (SRS 11.3)
 def test_defective_return_does_not_restock(client, staff_h, sample):
     inv = sell(client, staff_h, sample["items"][3:4]).json()
     assert stock_of(client, staff_h, "SAC-ANKER20") == 19
@@ -94,6 +98,7 @@ def test_full_return_releases_voucher_and_voids_warranty(client, staff_h, sample
     assert w.status == "void"  # BR-37
 
 
+# TC-RET-03 (SRS 11.3)
 def test_serial_must_match_and_returns_to_stock(client, staff_h, phone_with_serials):
     pid = phone_with_serials["id"]
     inv = sell(client, staff_h, [{"product_id": pid, "quantity": 1, "serial_no": "IMEI0000001"}]).json()
@@ -101,7 +106,7 @@ def test_serial_must_match_and_returns_to_stock(client, staff_h, phone_with_seri
     body = {"invoice_id": inv["id"], "reason": "Khách đổi ý không mua"}
     wrong = client.post("/api/returns", json={**body, "items": [{"invoice_item_id": item, "quantity": 1,
                                                                "serial_no": "IMEI0000002"}]}, headers=staff_h)
-    assert wrong.status_code == 400 and "không khớp" in wrong.json()["detail"]
+    assert wrong.status_code == 409 and "không khớp" in wrong.json()["detail"]
     ok = client.post("/api/returns", json={**body, "items": [{"invoice_item_id": item, "quantity": 1,
                                                             "serial_no": "imei0000001"}]}, headers=staff_h)
     assert ok.status_code == 201
@@ -129,9 +134,10 @@ def test_cancel_not_allowed_after_return(client, owner_h, sample):
                                      "items": [{"invoice_item_id": inv["items"][0]["id"], "quantity": 1}]},
                 headers=owner_h)
     r = client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "Lập sai hóa đơn"}, headers=owner_h)
-    assert r.status_code == 400 and "đổi trả" in r.json()["detail"]
+    assert r.status_code == 409 and "đổi trả" in r.json()["detail"]
 
 
+# FR-RET-01
 def test_lookup_by_phone_and_print_slip(client, staff_h, sample):
     inv = checkout_sample(client, staff_h, sample)
     found = client.get("/api/returns/lookup", params={"q": "0912345678"}, headers=staff_h).json()
@@ -145,6 +151,7 @@ def test_lookup_by_phone_and_print_slip(client, staff_h, sample):
 
 
 # ---------------------------------------------------------------- Bảo hành
+# TC-WAR-02, TC-WAR-04 (SRS 11.3)
 def test_warranty_lookup_and_ticket_lifecycle(client, staff_h, phone_with_serials, sample):
     pid = phone_with_serials["id"]
     sell(client, staff_h, [{"product_id": pid, "quantity": 1, "serial_no": "IMEI0000002"}],
@@ -161,7 +168,7 @@ def test_warranty_lookup_and_ticket_lifecycle(client, staff_h, phone_with_serial
     assert ticket["code"].startswith("BH-") and ticket["status"] == "received"
     dup = client.post("/api/warranty-tickets", json={"warranty_id": w["id"], "issue_description": "Lỗi thứ hai"},
                       headers=staff_h)
-    assert dup.status_code == 400 and ticket["code"] in dup.json()["detail"]  # FR-WAR-04
+    assert dup.status_code == 409 and ticket["code"] in dup.json()["detail"]  # FR-WAR-04
     serial = next(s for s in client.get(f"/api/products/{pid}/serials", headers=staff_h).json()
                   if s["serial_no"] == "IMEI0000002")
     assert serial["status"] == "in_warranty"
@@ -170,9 +177,9 @@ def test_warranty_lookup_and_ticket_lifecycle(client, staff_h, phone_with_serial
         return client.put(f"/api/warranty-tickets/{ticket['id']}", json={"status": status, "resolution": resolution},
                           headers=staff_h)
 
-    assert move("returned").status_code == 400  # sai thứ tự
+    assert move("returned").status_code == 409  # sai thứ tự
     assert move("in_repair").json()["status"] == "in_repair"
-    assert move("done").status_code == 400  # thiếu kết quả xử lý
+    assert move("done").status_code == 409  # thiếu kết quả xử lý
     assert move("done", "Thay IC nguồn").json()["completed_at"]
     assert move("returned").json()["returned_at"]
     serial = next(s for s in client.get(f"/api/products/{pid}/serials", headers=staff_h).json()
@@ -185,6 +192,7 @@ def test_warranty_lookup_and_ticket_lifecycle(client, staff_h, phone_with_serial
                        headers=staff_h).status_code == 201
 
 
+# TC-WAR-03 (SRS 11.3)
 def test_expired_or_void_warranty_cannot_be_received(client, staff_h, sample, db):
     inv = sell(client, staff_h, sample["items"][:1]).json()
     w = db.query(Warranty).filter_by(invoice_item_id=inv["items"][0]["id"]).one()
@@ -192,4 +200,4 @@ def test_expired_or_void_warranty_cannot_be_received(client, staff_h, sample, db
     db.commit()
     r = client.post("/api/warranty-tickets", json={"warranty_id": w.id, "issue_description": "Hỏng bàn phím"},
                     headers=staff_h)
-    assert r.status_code == 400 and "hết hạn" in r.json()["detail"]
+    assert r.status_code == 409 and "hết hạn" in r.json()["detail"]

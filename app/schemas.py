@@ -2,7 +2,7 @@ import re
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Role = Literal["admin", "owner", "staff"]
 # "transfer" và "qr" là tên cũ của chuyển khoản, vẫn nhận để không vỡ client cũ và được đổi thành bank_transfer
@@ -363,7 +363,9 @@ class InvoiceItemIn(BaseModel):
 class InvoiceIn(BaseModel):
     customer_id: int | None = None
     items: list[InvoiceItemIn] = Field(min_length=1)
-    promo_code: str | None = Field(default=None, max_length=30)  # voucher
+    # voucher; nhận cả tên trường "voucher_code" như ví dụ ở SRS mục 8.4.1
+    promo_code: str | None = Field(default=None, max_length=30,
+                                   validation_alias=AliasChoices("promo_code", "voucher_code"))
     points_used: int = Field(default=0, ge=0)
     discount: int = Field(default=0, ge=0)  # giảm tay (bản cũ), cộng vào giảm giá khuyến mãi
     discount_percent: float | None = Field(default=None, ge=0, le=100)
@@ -513,9 +515,20 @@ class VietQRIn(BaseModel):
     content: str = Field(default="", max_length=50)
 
 
+class CrossSellIn(BaseModel):
+    """FR-AIA-07: mã các sản phẩm đang có trong giỏ ở màn hình bán hàng."""
+    product_ids: list[int] = Field(min_length=1, max_length=50)
+
+
 class AIReportIn(BaseModel):
     date_from: str | None = None  # YYYY-MM-DD
     date_to: str | None = None
+
+
+class AIReportPdfIn(BaseModel):
+    markdown: str = Field(min_length=1, max_length=30_000)
+    date_from: str | None = Field(default=None, max_length=10)
+    date_to: str | None = Field(default=None, max_length=10)
 
 
 # ---------- Hệ thống ----------

@@ -39,7 +39,7 @@ export function ForcedChange() {
     <section className="auth">
       <main className="auth-main" style={{ margin: '0 auto' }}>
         <div className="auth-card">
-          <div className="auth-card-brand"><span className="brand-mark"><Icon name="store" /></span>TechStore AI</div>
+          <div className="auth-card-brand"><span className="brand-mark"><Icon name="store" /></span>TechStoreAI</div>
           <h2 className="auth-card-title">Đổi mật khẩu</h2>
           <ChangePasswordForm forced onDone={refresh} />
           <button className="link-btn" onClick={logout}>Đăng xuất</button>

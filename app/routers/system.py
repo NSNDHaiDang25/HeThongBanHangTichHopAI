@@ -11,11 +11,10 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import AuditLog, EmailLog, User, now
 from app.schemas import SettingsUpdateIn
-from app.security import ADMIN_ONLY, get_current_user, require_roles
+from app.security import ADMIN_ONLY, ADMIN_OR_OWNER, get_current_user
 from app.services import app_settings, audit, loyalty
 
 router = APIRouter(prefix="/api", tags=["system"])
-ADMIN_OR_OWNER = require_roles("owner")  # require_roles luôn cho admin
 
 
 # ---------------------------------------------------------------- Cấu hình (UC-07, UC-08)
@@ -115,7 +114,7 @@ def backup(db: Session = Depends(get_db), admin: User = Depends(ADMIN_ONLY)):
         content = path.read_bytes()
     audit.log(db, admin, "DB_BACKUP", "database", None, new={"bytes": len(content)})
     db.commit()
-    name = f"techstore-backup-{now():%Y%m%d-%H%M%S}.db"
+    name = f"techstoreai-backup-{now():%Y%m%d-%H%M%S}.db"
     return Response(content, media_type="application/vnd.sqlite3",
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 

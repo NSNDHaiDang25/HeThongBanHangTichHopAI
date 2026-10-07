@@ -62,13 +62,13 @@ export default function Login() {
       <aside className="auth-hero">
         <img className="auth-hero-img" src="/static/img/login-bg.webp" alt="" aria-hidden="true" />
         <div className="auth-hero-inner">
-          <div className="auth-logo"><span className="brand-mark"><Icon name="store" /></span>TechStore AI</div>
+          <div className="auth-logo"><span className="brand-mark"><Icon name="store" /></span>TechStoreAI</div>
           <div>
             <h1 className="auth-title">Quản lý bán hàng<br /><span className="accent-text">thiết bị điện tử</span></h1>
             <p className="auth-lead">Bán hàng tại quầy, serial và bảo hành, đổi trả 24 giờ, khuyến mãi, tích điểm, nhập kho và báo cáo. Trợ lý AI tư vấn sản phẩm và phân tích doanh thu từ dữ liệu thật.</p>
             <span className="auth-pill">Đề tài 01 · Nhóm 1</span>
           </div>
-          <div className="auth-copy">© 2026 TechStore AI</div>
+          <div className="auth-copy">© 2026 TechStoreAI</div>
         </div>
       </aside>
       <main className="auth-main">
@@ -77,7 +77,7 @@ export default function Login() {
           <div className="auth-top-actions"><ThemeToggle /></div>
         </div>
         <form className="auth-card" onSubmit={submit}>
-          <div className="auth-card-brand"><span className="brand-mark"><Icon name="store" /></span>TechStore AI</div>
+          <div className="auth-card-brand"><span className="brand-mark"><Icon name="store" /></span>TechStoreAI</div>
           <div>
             <h2 className="auth-card-title">Chào mừng trở lại</h2>
             <p className="muted auth-card-sub">Đăng nhập để tiếp tục vào hệ thống.</p>

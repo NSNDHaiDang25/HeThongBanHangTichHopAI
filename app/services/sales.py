@@ -79,7 +79,8 @@ def build_lines(db: Session, data: InvoiceIn, user: User, *, for_sale: bool,
         for pid, qty in need.items():
             p = products[pid]
             if qty > p.stock:
-                raise BusinessError(f"Sản phẩm '{p.name}' không đủ tồn kho (còn {p.stock}, cần {qty})")
+                raise BusinessError(f"Sản phẩm '{p.name}' không đủ tồn kho (còn {p.stock}, cần {qty})", "OUT_OF_STOCK",
+                                    details={"product_id": p.id, "available": p.stock, "requested": qty})
     return lines
 
 
@@ -90,13 +91,15 @@ def _pick_serial(db: Session, product: Product, item, for_sale: bool, own: set[i
     elif item.serial_no:
         serial = db.scalar(select(ProductSerial).where(ProductSerial.serial_no == item.serial_no.strip().upper()))
     elif for_sale:
-        raise BusinessError(f"'{product.name}' quản lý theo serial: hãy chọn serial / IMEI của máy bán")
+        raise BusinessError(f"'{product.name}' quản lý theo serial: hãy chọn serial / IMEI của máy bán",
+                            "SERIAL_REQUIRED", 422, {"product_id": product.id})
     else:
         return None
     if serial is None or serial.product_id != product.id:
         raise BusinessError(f"Serial không thuộc sản phẩm '{product.name}'")
     if serial.status != "in_stock" and serial.id not in own:
-        raise BusinessError(f"Serial {serial.serial_no} không còn trong kho (trạng thái {serial.status})")
+        raise BusinessError(f"Serial {serial.serial_no} không còn trong kho (trạng thái {serial.status})",
+                            "SERIAL_NOT_AVAILABLE")
     return serial
 
 
@@ -109,7 +112,7 @@ def preview(db: Session, data: InvoiceIn, user: User, own_promotion: int | None 
                                manual_discount=data.discount, manual_percent=data.discount_percent,
                                exclude_promotion_usage=own_promotion)
     except PricingError as e:
-        raise BusinessError(str(e))
+        raise BusinessError(str(e), "PRICING_INVALID")
 
 
 # ---------------------------------------------------------------- Ghi hóa đơn
@@ -140,7 +143,8 @@ def _below_cost_guard(db: Session, cart: pricing.Cart, user: User, inv: Invoice)
     if not cart.below_cost:
         return
     if user.role == "staff":
-        raise BusinessError("Giá sau giảm thấp hơn giá vốn, cần chủ cửa hàng xác nhận: " + "; ".join(cart.below_cost))
+        raise BusinessError("Giá sau giảm thấp hơn giá vốn, cần chủ cửa hàng xác nhận: " + "; ".join(cart.below_cost),
+                            "BELOW_COST")
     audit.log(db, user, "INVOICE_BELOW_COST", "invoices", inv.id, new=cart.below_cost)
 
 
@@ -170,7 +174,7 @@ def checkout(db: Session, data: InvoiceIn, user: User, existing: Invoice | None 
     own_serials: set[int] = set()
     if existing is not None:
         if existing.status not in ("draft", "pending_payment"):
-            raise BusinessError("Hóa đơn đã thanh toán không sửa được (BR-24)")
+            raise BusinessError("Hóa đơn đã thanh toán không sửa được (BR-24)", "INVOICE_LOCKED")
         if existing.status == "pending_payment":
             # Trả tồn kho, serial, lượt khuyến mãi của bản cũ rồi chốt lại như hóa đơn mới (giữ mã)
             _release_stock_and_promos(db, existing, user, "edit")
@@ -183,7 +187,7 @@ def checkout(db: Session, data: InvoiceIn, user: User, existing: Invoice | None 
         cart = pricing.compute(db, lines, customer, promo_code=data.promo_code, points_used=data.points_used,
                                manual_discount=data.discount, manual_percent=data.discount_percent, at=at)
     except PricingError as e:
-        raise BusinessError(str(e))
+        raise BusinessError(str(e), "PRICING_INVALID")
     method = LEGACY_METHODS.get(data.payment_method, data.payment_method)
     if existing is not None:
         inv = existing
@@ -203,7 +207,7 @@ def checkout(db: Session, data: InvoiceIn, user: User, existing: Invoice | None 
     for pid in _promotion_ids(cart):
         promo = db.get(Promotion, pid)
         if promo.usage_limit is not None and promo.used_count >= promo.usage_limit:
-            raise BusinessError(f"Khuyến mãi '{promo.name}' vừa hết lượt sử dụng")
+            raise BusinessError(f"Khuyến mãi '{promo.name}' vừa hết lượt sử dụng", "PROMOTION_USED_UP")
         promo.used_count += 1
     inv.payment_ref = (data.payment_ref or "").strip() or None
     inv.cash_received = None
@@ -211,11 +215,11 @@ def checkout(db: Session, data: InvoiceIn, user: User, existing: Invoice | None 
     if method == "cash":
         if data.cash_received is not None:
             if data.cash_received < inv.total:
-                raise BusinessError("Tiền khách đưa ít hơn tổng tiền cần thanh toán")  # BR-27
+                raise BusinessError("Tiền khách đưa ít hơn tổng tiền cần thanh toán", "CASH_NOT_ENOUGH", 422)  # BR-27
             inv.cash_received = data.cash_received
     elif method == "card":
         if not inv.payment_ref:
-            raise BusinessError("Thanh toán thẻ: nhập mã giao dịch in trên biên lai máy POS")  # BR-29
+            raise BusinessError("Thanh toán thẻ: nhập mã giao dịch in trên biên lai máy POS", "POS_REFERENCE_REQUIRED", 422)  # BR-29
     else:  # bank_transfer: chờ nhân viên xác nhận đã nhận tiền (BR-28), trừ khi đã xác nhận ngay tại quầy
         confirmed = data.payment_confirmed or data.payment_method in LEGACY_METHODS
         inv.payment_ref = inv.payment_ref or inv.code
@@ -248,7 +252,8 @@ def finalize_paid(db: Session, inv: Invoice, user: User, at: datetime | None = N
     if customer is not None:
         if inv.points_used:
             if inv.points_used > customer.loyalty_points:
-                raise BusinessError(f"Khách chỉ còn {customer.loyalty_points} điểm, không đủ {inv.points_used} điểm")
+                raise BusinessError(f"Khách chỉ còn {customer.loyalty_points} điểm, không đủ {inv.points_used} điểm",
+                                    "INSUFFICIENT_POINTS")
             loyalty.change_points(db, customer, -inv.points_used, "redeem", invoice_id=inv.id,
                                   note=f"Dùng điểm cho {inv.code}", user=user)
         inv.points_earned = loyalty.points_for(db, customer, inv.total)
@@ -274,9 +279,9 @@ def confirm_payment(db: Session, inv: Invoice, user: User, method: str | None = 
     method = LEGACY_METHODS.get(method, method) if method else inv.payment_method
     ref = (payment_ref or "").strip() or None
     if method == "card" and not ref:
-        raise BusinessError("Thanh toán thẻ: nhập mã giao dịch in trên biên lai máy POS")
+        raise BusinessError("Thanh toán thẻ: nhập mã giao dịch in trên biên lai máy POS", "POS_REFERENCE_REQUIRED", 422)
     if method == "cash" and cash_received is not None and cash_received < inv.total:
-        raise BusinessError("Tiền khách đưa ít hơn tổng tiền cần thanh toán")
+        raise BusinessError("Tiền khách đưa ít hơn tổng tiền cần thanh toán", "CASH_NOT_ENOUGH", 422)
     at = now()
     pending = next((p for p in inv.payments if p.status == "pending"), None)
     if pending is None or pending.method != method:
@@ -324,13 +329,14 @@ def cancel(db: Session, inv: Invoice, reason: str, user: User, *, system: bool =
         raise BusinessError("Hóa đơn đã bị hủy trước đó")
     if inv.status in ("partially_returned", "fully_returned") or \
             db.scalar(select(Return.id).where(Return.invoice_id == inv.id)):
-        raise BusinessError("Hóa đơn đã có phiếu đổi trả, không thể hủy")
+        raise BusinessError("Hóa đơn đã có phiếu đổi trả, không thể hủy", "CANCEL_NOT_ALLOWED")
     was_paid = inv.status == "paid"
     if was_paid:
         if not system and user.role == "staff":
-            raise BusinessError("Hóa đơn đã thanh toán cần chủ cửa hàng duyệt hủy")
+            raise BusinessError("Hóa đơn đã thanh toán cần chủ cửa hàng duyệt hủy", "APPROVAL_REQUIRED")
         if inv.created_at.date() != now().date():
-            raise BusinessError("Chỉ hủy được hóa đơn trong ngày lập. Khách đổi ý hoặc hàng lỗi hãy dùng đổi trả")
+            raise BusinessError("Chỉ hủy được hóa đơn trong ngày lập. Khách đổi ý hoặc hàng lỗi hãy dùng đổi trả",
+                                  "CANCEL_WINDOW_EXPIRED")
     if inv.status != "draft":
         _release_stock_and_promos(db, inv, user, "cancel")
     if was_paid and inv.customer_id:
@@ -366,7 +372,8 @@ def request_cancel(db: Session, inv: Invoice, reason: str, user: User) -> Invoic
     if inv.status != "paid":
         raise BusinessError("Chỉ gửi yêu cầu hủy cho hóa đơn đã thanh toán")
     if inv.created_at.date() != now().date():
-        raise BusinessError("Chỉ hủy được hóa đơn trong ngày lập. Khách đổi ý hoặc hàng lỗi hãy dùng đổi trả")
+        raise BusinessError("Chỉ hủy được hóa đơn trong ngày lập. Khách đổi ý hoặc hàng lỗi hãy dùng đổi trả",
+                                  "CANCEL_WINDOW_EXPIRED")
     if inv.cancel_requested_at:
         raise BusinessError("Hóa đơn đã có yêu cầu hủy đang chờ duyệt")
     inv.cancel_requested_by, inv.cancel_requested_at, inv.cancel_reason = user.id, now(), reason

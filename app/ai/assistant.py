@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.ai import tools
 from app.ai.client import AIError, GeminiClient
 from app.ai.prompts import render_prompt
+from app.ai.sanitizer import scrub
 from app.ai.service import (_active_products, _fallback_advise, _fallback_answer, _product_dict, clean_input,
                             detect_period, fmt_vnd, strip_accents)
 from app.config import settings
@@ -46,7 +47,7 @@ def _prompt_vars(user: User) -> dict:
 
 def _history_contents(history: list[dict]) -> list[dict]:
     out = [{"role": "user" if m.get("role") == "user" else "model",
-            "parts": [{"text": clean_input(str(m.get("content", "")), 2000)}]} for m in history]
+            "parts": [{"text": scrub(clean_input(str(m.get("content", "")), 2000))}]} for m in history]
     while out and out[0]["role"] == "model":  # hội thoại gửi cho Gemini phải bắt đầu bằng lượt của người dùng
         out.pop(0)
     return out
@@ -77,7 +78,8 @@ def reply(db: Session, client: GeminiClient, user: User, message: str, history: 
         return {**fallback(db, user, message), "source": "fallback",
                 "warning": "Chưa cấu hình GEMINI_API_KEY - trợ lý đang chạy chế độ dự phòng, chỉ hiểu các câu hỏi cơ bản."}
 
-    system, user_text = render_prompt("assistant", message=message, **_prompt_vars(user))
+    # FR-AIG-03 / BR-42: số điện thoại, email, dãy số dài trong câu hỏi không được gửi cho AI
+    system, user_text = render_prompt("assistant", message=scrub(message), **_prompt_vars(user))
     declarations = tools.declarations(tools.available(user))
     contents = _history_contents(history or []) + [{"role": "user", "parts": [{"text": user_text}]}]
     for attempt in range(MAX_MODEL_SWITCHES + 1):

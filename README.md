@@ -1,14 +1,18 @@
-# TechStore AI: Hệ thống quản lý bán hàng tích hợp AI
+# TechStoreAI: Hệ thống quản lý bán hàng tích hợp AI
 
 Web app quản lý bán hàng cho cửa hàng bán lẻ: sản phẩm, khách hàng, hóa đơn, nhập hàng, tồn kho, báo cáo doanh thu, kèm **4 chức năng AI (Google Gemini)**: trợ lý đa năng, chatbot tư vấn sản phẩm, AI sinh báo cáo doanh thu, hỏi đáp dữ liệu bán hàng.
 
 **Công nghệ:** Python 3.11+ · FastAPI · SQLAlchemy 2 · SQLite (đổi được sang PostgreSQL/MySQL) · React 18 + Vite · Chart.js · Gemini API · pytest
 
-Đặc tả yêu cầu: tài liệu SRS TechStore AI (Nhóm 1). Giao diện React theo SRS mục 2.6; giao diện HTML/JS cũ vẫn mở được ở `/classic`.
+Đặc tả yêu cầu: tài liệu SRS TechStoreAI (Nhóm 1). Giao diện React theo SRS mục 2.6; giao diện HTML/JS cũ vẫn mở được ở `/classic`.
 
 ## Chạy nhanh
 
 ```bash
+# 0. Lấy mã nguồn
+git clone https://github.com/NSNDHaiDang25/TechStoreAI.git
+cd TechStoreAI
+
 # 1. Tạo môi trường và cài thư viện
 python -m venv .venv
 .venv\Scripts\activate          # Windows
@@ -20,7 +24,7 @@ copy .env.example .env          # Windows  (macOS/Linux: cp .env.example .env)
 #    Mở .env, điền GEMINI_API_KEY (lấy tại https://aistudio.google.com/apikey)
 #    Để trống thì AI chạy chế độ dự phòng, mọi chức năng khác vẫn dùng bình thường.
 
-# 3. Tạo dữ liệu mẫu (26 sản phẩm, 12 khách hàng, ~650 hóa đơn trong 120 ngày)
+# 3. Tạo dữ liệu mẫu theo SRS Phụ lục A (3 tài khoản, 8 nhóm hàng, 41 sản phẩm, 20 khách, 5 nhà cung cấp, 60 hóa đơn)
 python -m scripts.seed
 
 # 4. Chạy server
@@ -31,9 +35,9 @@ Mở **http://localhost:8000** (giao diện React, bản build có sẵn trong `
 
 | Tài khoản | Mật khẩu | Vai trò |
 |---|---|---|
-| `admin` | `admin123` | Quản trị viên: toàn quyền, quản lý người dùng |
-| `owner` | `owner123` | Chủ cửa hàng: quản lý, báo cáo, AI báo cáo/hỏi đáp |
-| `staff` | `staff123` | Nhân viên bán hàng: bán hàng, khách hàng, trợ lý AI, chatbot |
+| `admin` | `admin123` | Quản trị viên: người dùng, cấu hình kỹ thuật và AI, sao lưu, nhật ký. Không bán hàng, không xem giá vốn và doanh thu (phải đổi mật khẩu ở lần đăng nhập đầu) |
+| `chucuahang` | `owner123` | Chủ cửa hàng: quản lý, báo cáo, AI báo cáo/hỏi đáp |
+| `nhanvien01` | `staff123` | Nhân viên bán hàng: bán hàng, khách hàng, trợ lý AI, chatbot |
 
 Màn hình đăng nhập có nút đăng nhập nhanh cho từng vai trò.
 
@@ -66,6 +70,7 @@ Lần chạy đầu container tự tạo dữ liệu mẫu. CSDL lưu trong `./d
 |---|---|---|
 | **Trợ lý đa năng** | `prompts/assistant.md` | Một khung chat hỏi được mọi thứ: sản phẩm, tồn kho, hóa đơn, khách hàng, doanh thu, xu hướng, nhập hàng, cách dùng phần mềm (`prompts/app_guide.md`), kiến thức chung. Gemini **function calling**: AI tự chọn trong 13 công cụ chỉ-đọc (`app/ai/tools.py`), không sinh SQL; công cụ lọc theo vai trò |
 | Chatbot tư vấn sản phẩm | `prompts/product_advisor_v3.md` | Chỉ gửi sản phẩm còn hàng; trả JSON; server hậu kiểm loại mã sai hoặc hết hàng; có nút "Thêm vào giỏ" |
+| Gợi ý phụ kiện ở màn hình bán hàng | `prompts/cross_sell.md` | Dựa trên giỏ hiện tại (FR-AIA-07): chỉ gửi phụ kiện còn hàng chưa có trong giỏ, hậu kiểm mã, dự phòng theo nhóm hàng khi AI lỗi |
 | AI sinh báo cáo doanh thu | `prompts/sales_report.md` | Hệ thống tính số liệu, AI viết nhận xét và khuyến nghị nhập hàng dạng Markdown |
 | Hỏi đáp dữ liệu bán hàng | `prompts/sales_sql.md`, `prompts/sales_qa.md` | **Text-to-SQL** theo SRS 6.5: AI sinh một câu SELECT trên 7 view `v_ai_*`, hệ thống kiểm tra rồi chạy chỉ đọc, AI diễn giải bảng kết quả; giao diện hiện bảng và câu SQL. Xem mục bên dưới |
 
@@ -75,9 +80,12 @@ Xử lý lỗi AI gồm: timeout, retry có backoff khi gặp 429/5xx, xử lý 
 
 ```bash
 pytest -q
+python -m scripts.trace_matrix --run   # chạy test và sinh ma trận truy vết docs/05_ma_tran_truy_vet.md
 ```
 
-300+ test gồm hóa đơn (`test_invoices.py`), tồn kho (`test_inventory.py`), báo cáo và xuất file (`test_reports.py`), AI (`test_ai.py`), hỏi đáp text-to-SQL và 5 lớp bảo vệ (`test_text_to_sql.py`), API bổ sung theo SRS 8.4 như nhập CSV, `/api/inventory/*`, `/api/export/*` (`test_srs_api.py`), trợ lý đa năng (`test_assistant.py`), lịch sử trò chuyện (`test_chat_history.py`), thanh toán, VietQR, quét mã và ảnh sản phẩm (`test_payments_images.py`). Test AI dùng client giả nên không cần mạng hay API key.
+Đủ **72/72 test case nghiệp vụ của SRS mục 11.3** đều có test tự động và đạt. Mỗi hàm test ghi mã test case (`# TC-SAL-01 (SRS 11.3)`) và mã yêu cầu (`FR-...`) ngay trên hàm, nên `scripts/trace_matrix.py` nối được yêu cầu, use case, test case, mã nguồn và kết quả chạy (SRS mục 11.2, 11.4). `tests/test_srs_acceptance.py` chứa các test nghiệm thu bổ sung: hai quầy cùng bán chiếc cuối cùng, 20 quầy chốt hóa đơn đồng thời, hoàn tác giao dịch khi lỗi, thẻ kho khớp tồn, lọc dữ liệu nhạy cảm trước khi gửi AI, báo cáo AI đủ bốn mục và số liệu khớp...
+
+340+ test gồm hóa đơn (`test_invoices.py`), tồn kho (`test_inventory.py`), báo cáo và xuất file (`test_reports.py`), AI (`test_ai.py`), hỏi đáp text-to-SQL và 5 lớp bảo vệ (`test_text_to_sql.py`), API bổ sung theo SRS 8.4 như nhập CSV, `/api/inventory/*`, `/api/export/*` (`test_srs_api.py`), trợ lý đa năng (`test_assistant.py`), lịch sử trò chuyện (`test_chat_history.py`), thanh toán, VietQR, quét mã và ảnh sản phẩm (`test_payments_images.py`). Test AI dùng client giả nên không cần mạng hay API key.
 
 So sánh 3 phiên bản prompt với Gemini thật (cần API key):
 
@@ -94,17 +102,19 @@ app/
   models.py            Các bảng dữ liệu (SRS chương 7)
   schemas.py           Kiểm tra dữ liệu vào
   security.py          Băm mật khẩu, JWT, phân quyền
+  errors.py            Cấu trúc lỗi chung {"error": {"code", "message", "details"}} (SRS 8.4.1)
   routers/             API theo SRS 8.4 (auth, catalog, product_import, inventory, invoices, aftersales, reports, ai, system...)
   services/            Nghiệp vụ: sales, pricing, inventory, purchasing, aftersales, loyalty, reports, export, qr...
   ai/                  client.py (Gemini), service.py (tư vấn, báo cáo, hỏi đáp), text_to_sql.py (view v_ai_*, kiểm tra SQL,
-                       kết nối chỉ đọc), assistant.py + tools.py (trợ lý đa năng), history.py (lịch sử chat)
+                       kết nối chỉ đọc), sanitizer.py (che SĐT, email, số tài khoản trước khi gửi AI),
+                       assistant.py + tools.py (trợ lý đa năng), history.py (lịch sử chat)
 frontend/              Mã nguồn giao diện React (Vite): src/pages/ mỗi màn hình một file, src/ui/ thành phần dùng chung
 static/app/            Bản build React (npm run build), FastAPI phục vụ trực tiếp
 static/                Giao diện cũ: index.html, style.css, app.js; img/products/ (ảnh sản phẩm mẫu)
 prompts/               Prompt template (tách khỏi code)
-scripts/               seed.py, compare_prompts.py
+scripts/               seed.py, compare_prompts.py, trace_matrix.py (ma trận truy vết)
 tests/                 pytest
-docs/                  Tài liệu dự án; docs/templates/mau_nhap_san_pham.csv (mẫu nhập sản phẩm)
+docs/                  Tài liệu dự án; docs/srs/ (yêu cầu, test case trích từ SRS); docs/templates/ (mẫu nhập sản phẩm)
 ```
 
 ### Sửa giao diện React
@@ -115,6 +125,25 @@ npm install
 npm run dev      # http://localhost:5173, tự chuyển /api sang uvicorn ở cổng 8000
 npm run build    # ghi bản build vào static/app/ (nhớ commit thư mục này)
 ```
+
+## Quy ước lỗi API (SRS 8.4.1)
+
+Mọi lỗi trả về cùng cấu trúc, kèm khóa `detail` để giao diện cũ vẫn đọc được:
+
+```json
+{"error": {"code": "OUT_OF_STOCK", "message": "Sản phẩm 'Chuột Logitech M331' không đủ tồn kho (còn 1, cần 2)",
+           "details": {"product_id": 7, "available": 1, "requested": 2}},
+ "detail": "Sản phẩm 'Chuột Logitech M331' không đủ tồn kho (còn 1, cần 2)"}
+```
+
+Mã trạng thái theo bảng 8.12: vi phạm quy tắc nghiệp vụ trả **409** (`OUT_OF_STOCK`, `RETURN_WINDOW_EXPIRED`, `DUPLICATE_SERIAL`, `WARRANTY_TICKET_OPEN`, `BELOW_COST`...), thiếu dữ liệu bắt buộc trả **422** (`SERIAL_REQUIRED`, `POS_REFERENCE_REQUIRED`, `VALIDATION_ERROR`), quá 20 lượt AI mỗi giờ trả **429** `RATE_LIMITED`, AI đang tắt trả **503** `AI_DISABLED`.
+
+## AI: lọc dữ liệu nhạy cảm, thu hẹp sản phẩm, kiểm tra báo cáo
+
+- **Lọc dữ liệu nhạy cảm (FR-AIG-03, bảng 6.9):** trước khi gửi cho AI và trước khi lưu `ai_logs`, câu hỏi và lịch sử chat được thay số điện thoại bằng `[SĐT]`, email bằng `[EMAIL]`, dãy 9 đến 19 chữ số (số tài khoản, thẻ, IMEI) bằng `[SỐ]` (`app/ai/sanitizer.py`).
+- **Tư vấn sản phẩm (FR-AIA-02, 08):** prompt v3 chỉ chứa sản phẩm còn hàng, đã thu hẹp theo nhóm hàng và khoảng giá nhận ra trong câu hỏi ("tai nghe dưới 500000", "từ 5 đến 10 triệu"), kèm 5 lượt hội thoại gần nhất. Bảng sản phẩm đặt trong khối `<<<DU_LIEU ... DU_LIEU>>>`, chỉ dẫn hệ thống nói rõ nội dung trong khối chỉ là dữ liệu (FR-AIG-09). JSON hỏng thì thử lại một lần (FR-AIG-05).
+- **Báo cáo doanh thu (FR-AIR-01 đến 06):** hệ thống tự tính so sánh kỳ trước (`comparison.growth_percent`) và giá trị tồn (`stock_value`). Báo cáo AI phải đủ bốn mục *Tổng quan, Điểm đáng chú ý, Rủi ro tồn kho, Khuyến nghị nhập hàng* và mọi con số tiền phải có trong dữ liệu đã gửi; sai thì thử lại một lần, vẫn sai thì dùng báo cáo mẫu. Báo cáo xuất được ra PDF (`POST /api/ai/report/pdf`).
+- **Số lần thử lại** của mỗi lượt gọi được ghi vào `ai_logs.retry_count` (FR-AIG-07).
 
 ## Hỏi đáp dữ liệu bằng text-to-SQL (SRS 6.5)
 
@@ -142,6 +171,8 @@ Trang **Sản phẩm** → **Nhập CSV**: tải tệp mẫu, điền, bấm **K
 | [docs/02_minh_chung_su_dung_AI.md](docs/02_minh_chung_su_dung_AI.md) | Minh chứng dùng AI trong từng giai đoạn SDLC, kèm mẫu để nhóm bổ sung |
 | [docs/03_so_sanh_prompt.md](docs/03_so_sanh_prompt.md) | **KT3**: so sánh 3 phiên bản prompt tư vấn |
 | [docs/04_kich_ban_demo.md](docs/04_kich_ban_demo.md) | Kịch bản demo 10 phút và câu hỏi bảo vệ |
+| [docs/05_ma_tran_truy_vet.md](docs/05_ma_tran_truy_vet.md) | Ma trận truy vết yêu cầu - use case - test case - mã nguồn - kết quả test (sinh tự động) |
+| [docs/srs/](docs/srs/) | Danh sách yêu cầu FR/NFR và 72 test case trích từ SRS, dùng cho ma trận truy vết |
 
 ## Cấu hình tài khoản nhận tiền (VietQR)
 
@@ -151,7 +182,7 @@ Trong `.env`, đổi các giá trị demo thành tài khoản thật của cửa
 VIETQR_BANK_BIN=970436          # mã BIN ngân hàng, xem https://api.vietqr.io/v2/banks
 VIETQR_BANK_NAME=Vietcombank
 VIETQR_ACCOUNT_NO=0123456789
-VIETQR_ACCOUNT_NAME=CUA HANG SALESAI
+VIETQR_ACCOUNT_NAME=CUA HANG TECHSTOREAI
 ```
 
 Mã QR được sinh ngay trên máy chủ theo chuẩn EMVCo/NAPAS, không gọi dịch vụ bên ngoài. Hệ thống **không tự xác nhận** tiền đã về tài khoản: thu ngân kiểm tra app ngân hàng rồi bấm "Đã nhận tiền".

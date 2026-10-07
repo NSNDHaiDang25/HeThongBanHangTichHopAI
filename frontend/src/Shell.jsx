@@ -41,7 +41,7 @@ export default function Shell({ title, children }) {
   return (
     <div className="layout">
       <aside className={`sidebar ${open ? 'open' : ''}`}>
-        <div className="brand"><span className="brand-mark"><Icon name="store" /></span>TechStore AI</div>
+        <div className="brand"><span className="brand-mark"><Icon name="store" /></span>TechStoreAI</div>
         <nav>
           {NAV.map((g) => {
             const items = g.items.filter((i) => i.roles.includes(user.role))

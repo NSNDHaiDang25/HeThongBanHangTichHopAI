@@ -56,7 +56,7 @@ class Receipt:
 
     def header(self, title: str, code: str, when: str, reprint: bool = False) -> "Receipt":
         s = self.store
-        self.text(s.get("store_name") or "TechStore", 11, True, "C")
+        self.text(s.get("store_name") or "TechStoreAI", 11, True, "C")
         for line in (s.get("store_address"), s.get("store_phone") and f"ĐT: {s['store_phone']}",
                      s.get("store_tax_code") and f"MST: {s['store_tax_code']}"):
             if line:

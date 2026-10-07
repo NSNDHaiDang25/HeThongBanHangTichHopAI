@@ -1,6 +1,6 @@
 # Phân tích yêu cầu và thiết kế hệ thống (Bài KT1)
 
-**Đề tài:** Hệ thống quản lý bán hàng có tích hợp AI (SalesAI)
+**Đề tài:** Hệ thống quản lý bán hàng có tích hợp AI (TechStoreAI)
 **Công nghệ:** Python FastAPI · SQLAlchemy · SQLite (tương thích PostgreSQL/MySQL) · HTML/CSS/JavaScript · Google Gemini API
 
 > Các sơ đồ viết bằng Mermaid. Xem trực tiếp trên GitHub/GitLab, VS Code (extension *Markdown Preview Mermaid Support*) hoặc dán vào https://mermaid.live để xuất ảnh đưa vào báo cáo.
@@ -41,7 +41,7 @@ flowchart TD
 - BR4: Lưu **giá vốn tại thời điểm bán** vào chi tiết hóa đơn để tính lãi gộp chính xác khi giá nhập thay đổi.
 - BR5: Toàn bộ thao tác (lưu hóa đơn + trừ kho) nằm trong **một giao dịch**; lỗi ở bất kỳ dòng nào → rollback toàn bộ.
 - BR8: Thanh toán tiền mặt: tiền khách đưa phải ≥ tổng tiền; hệ thống lưu lại và in tiền thừa trên hóa đơn.
-- BR9: Thanh toán VietQR: mã QR chứa sẵn số tài khoản cửa hàng, số tiền và nội dung (SALESAI + thời điểm); thu ngân xác nhận đã nhận tiền thì hóa đơn mới được lưu. Nội dung được lưu vào `payment_ref` để đối soát với sao kê.
+- BR9: Thanh toán VietQR: mã QR chứa sẵn số tài khoản cửa hàng, số tiền và nội dung (TECHSTOREAI + thời điểm); thu ngân xác nhận đã nhận tiền thì hóa đơn mới được lưu. Nội dung được lưu vào `payment_ref` để đối soát với sao kê.
 
 ### 2.2. Quy trình hủy / sửa hóa đơn
 
@@ -95,7 +95,7 @@ flowchart LR
     Admin((Quản trị<br/>viên))
     AI[[Gemini API]]
 
-    subgraph SalesAI
+    subgraph TechStoreAI
       UC1([Đăng nhập / Đăng xuất])
       UC2([Lập hóa đơn bán hàng])
       UC3([Tra cứu, lọc hóa đơn])
@@ -428,7 +428,7 @@ flowchart TD
 
 ```
 ┌──────────┬──────────────────────────────────────────────────────────────────────┐
-│ SalesAI  │ Bán hàng                          [AI: gemini]     Nhân viên [Đăng xuất]│
+│ TechStoreAI  │ Bán hàng                          [AI: gemini]     Nhân viên [Đăng xuất]│
 │          ├──────────────────────────────────────────────┬───────────────────────┤
 │ Bán hàng │ [🔍 Tìm tên / mã sản phẩm......] [Nhóm hàng ▾]│ GIỎ HÀNG              │
 │ Hóa đơn  │ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐   │ Khách: [tìm tên/SĐT][+]│

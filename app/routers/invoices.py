@@ -5,7 +5,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app.database import get_db
+from app.database import get_db, lock_for_write
 from app.models import (PAID_STATES, Customer, ImportReceipt, Invoice, InvoiceItem, Return, User, Warranty)
 from app.schemas import (CancelDecisionIn, ConfirmPaymentIn, EmailInvoiceIn, ImportIn, InvoiceCancelIn, InvoiceIn)
 from app.security import ALL_STAFF, MANAGERS
@@ -154,12 +154,13 @@ def _run(db: Session, fn, *args, **kwargs):
     """Chạy nghiệp vụ trong một giao dịch; mã hóa đơn trùng do hai quầy lập cùng lúc thì thử lại một lần."""
     for attempt in range(2):
         try:
+            lock_for_write(db)  # mã chứng từ không trùng khi nhiều quầy ghi cùng lúc (FR-SAL-12)
             result = fn(*args, **kwargs)
             db.commit()
             return result
         except BusinessError as e:
             db.rollback()
-            raise HTTPException(400, str(e))
+            raise e.http()
         except IntegrityError:
             db.rollback()
             if attempt == 1:
@@ -173,7 +174,7 @@ def preview_invoice(data: InvoiceIn, db: Session = Depends(get_db), user: User =
     try:
         cart = sales.preview(db, data, user)
     except BusinessError as e:
-        raise HTTPException(400, str(e))
+        raise e.http()
     finally:
         db.rollback()
     return cart.summary()
@@ -351,5 +352,5 @@ def create_import(data: ImportIn, db: Session = Depends(get_db), user: User = De
         db.commit()
     except BusinessError as e:
         db.rollback()
-        raise HTTPException(400, str(e))
+        raise e.http()
     return import_out(r)

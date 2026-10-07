@@ -139,7 +139,8 @@ def confirm(db: Session, po: ImportReceipt, user: User, at: datetime | None = No
     if all_serials:
         exists = db.scalars(select(ProductSerial.serial_no).where(ProductSerial.serial_no.in_(all_serials))).all()
         if exists:
-            raise BusinessError(f"Serial đã có trong hệ thống: {', '.join(sorted(exists))}")  # FR-PUR-03
+            raise BusinessError(f"Serial đã có trong hệ thống: {', '.join(sorted(exists))}", "DUPLICATE_SERIAL",
+                                details={"serials": sorted(exists)})  # FR-PUR-03
     for it in po.items:
         p = products[it.product_id]
         if it.unit_cost <= 0:

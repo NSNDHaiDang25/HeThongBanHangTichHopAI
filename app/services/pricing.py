@@ -232,11 +232,12 @@ def compute(db: Session, lines: list[Line], customer: Customer | None, *, promo_
     if points_used:
         if customer is None:
             raise PricingError("Khách lẻ không dùng được điểm, hãy chọn khách hàng")
-        if points_used > customer.loyalty_points:
-            raise PricingError(f"Khách chỉ có {customer.loyalty_points} điểm")
         if points_used > cart.points_max:
-            raise PricingError(f"Chỉ được dùng tối đa {cart.points_max} điểm cho hóa đơn này "
-                               f"({cfg['points_max_percent']}% giá trị sau khuyến mãi)")
+            # UC-22 luồng 2a: vượt số điểm đang có hoặc vượt 50% giá trị sau khuyến mãi thì tự hạ về mức tối đa
+            why = (f"khách chỉ có {customer.loyalty_points} điểm" if cart.points_max == customer.loyalty_points
+                   else f"tối đa {cfg['points_max_percent']}% giá trị hóa đơn sau khuyến mãi")
+            cart.warnings.append(f"Đã tự hạ số điểm dùng từ {points_used} xuống {cart.points_max} ({why})")
+            points_used = cart.points_max
         cart.points_used = points_used
         cart.points_discount = points_used * point_value
 

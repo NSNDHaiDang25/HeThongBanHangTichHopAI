@@ -1,4 +1,4 @@
-/* SalesAI - giao diện SPA thuần JavaScript (không cần build). */
+/* TechStoreAI - giao diện SPA thuần JavaScript (không cần build). */
 'use strict';
 
 // ============================================================ Icon (nét 2px, 24x24, cùng một phong cách)
@@ -487,7 +487,7 @@ async function navigate() {
   S.charts = [];
   $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === key));
   $('#page-title').textContent = ROUTES[key].title;
-  document.title = `${ROUTES[key].title} · SalesAI`;
+  document.title = `${ROUTES[key].title} · TechStoreAI`;
   $('#sidebar').classList.remove('open');
   const page = $('#page');
   page.innerHTML = `<div class="card">${skeletonLines(6)}</div>`;
@@ -568,7 +568,7 @@ function readToken() {
 function showAdminHelp(title) {
   modal({
     title: `${icon('headset')} ${title}`, size: 'narrow',
-    body: `<p class="mt-0">Tài khoản SalesAI do <b>quản trị viên</b> của cửa hàng cấp.</p>
+    body: `<p class="mt-0">Tài khoản TechStoreAI do <b>quản trị viên</b> của cửa hàng cấp.</p>
       <ul class="list">
         <li>Liên hệ quản trị viên để được đặt lại mật khẩu hoặc mở khóa tài khoản.</li>
         <li>Quản trị viên vào menu <b>Người dùng</b>, chọn tài khoản, nhập mật khẩu mới rồi lưu.</li>
@@ -954,7 +954,7 @@ async function pagePOS(page) {
       $('#cash-in').oninput = (e) => { pay.cash = String(parseMoney(e.target.value) ?? ''); updatePayInfo(); };
       $('#cash-chips').onclick = (e) => { const v = e.target.dataset.cash; if (v) { pay.cash = v; $('#cash-in').value = fmtMoneyInput(v); updatePayInfo(); } };
     } else if (pay.method === 'transfer') {
-      pay.ref = pay.ref || `SALESAI ${stamp()}`;
+      pay.ref = pay.ref || `TECHSTOREAI ${stamp()}`;
       box.innerHTML = `<div class="bank-info"><span class="k">Ngân hàng</span><span>${esc(cfg.bank_name || '')}</span>
           <span class="k">Số tài khoản</span><span class="strong">${esc(cfg.account_no || '')}</span>
           <span class="k">Chủ tài khoản</span><span>${esc(cfg.account_name || '')}</span></div>
@@ -1137,7 +1137,7 @@ async function pagePOS(page) {
 async function showQRPayment(amount) {
   let qr;
   try {
-    qr = await api('/payments/vietqr', { method: 'POST', body: { amount, content: `SALESAI ${stamp()}` } });
+    qr = await api('/payments/vietqr', { method: 'POST', body: { amount, content: `TECHSTOREAI ${stamp()}` } });
   } catch (e) { toast(e.message, 'error'); return null; }
   return new Promise((resolve) => {
     const m = modal({
@@ -1230,7 +1230,7 @@ function paymentLines(inv) {
 }
 
 function showReceipt(inv) {
-  const shop = S.payCfg?.shop_name || 'Cửa hàng SalesAI';
+  const shop = S.payCfg?.shop_name || 'Cửa hàng TechStoreAI';
   const m = modal({
     title: `${icon('receipt')} Hóa đơn ${esc(inv.code)}`, size: 'narrow',
     body: `<div class="receipt print-area">
@@ -1930,7 +1930,7 @@ function aiMeta(res) {
 
 const CHAT_CFG = {
   assistant: {
-    endpoint: '/ai/assistant', assistant: 'Trợ lý SalesAI',
+    endpoint: '/ai/assistant', assistant: 'Trợ lý TechStoreAI',
     greeting: 'Hôm nay mình giúp gì được cho bạn?',
     intro: 'Hỏi bất cứ điều gì: sản phẩm, giá, tồn kho, hóa đơn, khách hàng, doanh thu, cách dùng phần mềm, hay nhờ viết tin nhắn chăm sóc khách, ý tưởng khuyến mãi... Trợ lý tự tra dữ liệu thật của cửa hàng trong phạm vi quyền của bạn.',
     placeholder: 'Hỏi bất cứ điều gì, VD: tuần này bán được bao nhiêu? sạc nào dưới 200k còn hàng?',

@@ -86,5 +86,43 @@ def to_pdf(title: str, subtitle: str, sections: list[tuple[str, list[str], list[
     return bytes(pdf.output())
 
 
+def markdown_pdf(title: str, subtitle: str, markdown: str) -> bytes:
+    """FR-AIR-06: xuất báo cáo AI (Markdown đơn giản: tiêu đề ##, gạch đầu dòng, **đậm**) ra PDF A4 tiếng Việt."""
+    import re
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    regular, bold = FONT_DIR / "DejaVuSans.ttf", FONT_DIR / "DejaVuSans-Bold.ttf"
+    if regular.exists():
+        pdf.add_font("U", "", str(regular))
+        pdf.add_font("U", "B", str(bold if bold.exists() else regular))
+        family, fix = "U", (lambda t: t)
+    else:
+        family, fix = "Helvetica", strip_accents
+    pdf.set_auto_page_break(True, margin=15)
+    pdf.add_page()
+    pdf.set_font(family, "B", 15)
+    pdf.multi_cell(0, 8, fix(title), align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font(family, "", 9)
+    pdf.multi_cell(0, 5, fix(subtitle), align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(3)
+    for raw in markdown.splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            pdf.ln(2)
+            continue
+        plain = re.sub(r"\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`", lambda m: next(g for g in m.groups() if g), line)
+        if m := re.match(r"^\s*#{1,6}\s+(.*)", plain):
+            pdf.ln(2)
+            pdf.set_font(family, "B", 12)
+            pdf.multi_cell(0, 7, fix(m.group(1)), new_x="LMARGIN", new_y="NEXT")
+        elif m := re.match(r"^\s*[-*+]\s+(.*)", plain):
+            pdf.set_font(family, "", 10)
+            pdf.set_x(pdf.l_margin + 4)
+            pdf.multi_cell(0, 5.5, fix("• " + m.group(1)), new_x="LMARGIN", new_y="NEXT")
+        else:
+            pdf.set_font(family, "", 10)
+            pdf.multi_cell(0, 5.5, fix(plain.lstrip("> ")), new_x="LMARGIN", new_y="NEXT")
+    return bytes(pdf.output())
+
+
 def vnd(v: int) -> str:
     return f"{v:,.0f}".replace(",", ".")

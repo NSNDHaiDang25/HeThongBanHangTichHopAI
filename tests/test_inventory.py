@@ -48,15 +48,15 @@ def test_import_can_create_new_products(client, owner_h):
 def test_import_new_product_rejects_duplicates_and_rolls_back(client, owner_h):
     dup_name = client.post("/api/imports", json={"items": [
         {"new_product": {"name": "tai nghe bluetooth a1", "sale_price": 1}, "quantity": 1, "unit_cost": 1}]}, headers=owner_h)
-    assert dup_name.status_code == 400 and "đã có trong danh mục" in dup_name.json()["detail"]
+    assert dup_name.status_code == 409 and "đã có trong danh mục" in dup_name.json()["detail"]
     dup_code = client.post("/api/imports", json={"items": [
         {"new_product": {"name": "Hàng mới X", "code": "pk001", "sale_price": 1}, "quantity": 1, "unit_cost": 1}]}, headers=owner_h)
-    assert dup_code.status_code == 400
+    assert dup_code.status_code == 409
     # dòng lỗi phía sau => sản phẩm mới ở dòng trước cũng không được tạo
     bad = client.post("/api/imports", json={"items": [
         {"new_product": {"name": "Hàng mới Y", "sale_price": 1}, "quantity": 1, "unit_cost": 1},
         {"product_id": 99999, "quantity": 1, "unit_cost": 1}]}, headers=owner_h)
-    assert bad.status_code == 400
+    assert bad.status_code == 404
     assert client.get("/api/products", params={"q": "Hàng mới"}, headers=owner_h).json()["total"] == 0
     assert stock_of(client, owner_h, "PK001") == 12
 
@@ -90,7 +90,7 @@ def test_cancel_twice_does_not_double_restore(client, owner_h):
     inv = sell(client, owner_h, pk1, 5)
     client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "Lập sai hóa đơn"}, headers=owner_h)
     r = client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "Lập sai hóa đơn"}, headers=owner_h)
-    assert r.status_code == 400
+    assert r.status_code == 409
     assert stock_of(client, owner_h, "PK001") == 12
 
 
@@ -122,7 +122,7 @@ def test_failed_edit_rolls_back_stock(client, owner_h):
     inv = sell_pending(client, owner_h, pk1, 5)  # còn 7
     r = client.put(f"/api/invoices/{inv['id']}", json={"items": [{"product_id": pk1, "quantity": 50}]},
                    headers=owner_h)
-    assert r.status_code == 400
+    assert r.status_code == 409
     assert stock_of(client, owner_h, "PK001") == 7
     detail = client.get(f"/api/invoices/{inv['id']}", headers=owner_h).json()
     assert detail["items"][0]["quantity"] == 5
@@ -134,7 +134,7 @@ def test_cannot_edit_cancelled_invoice(client, owner_h):
     client.post(f"/api/invoices/{inv['id']}/cancel", json={"reason": "Lập sai hóa đơn"}, headers=owner_h)
     r = client.put(f"/api/invoices/{inv['id']}", json={"items": [{"product_id": pk1, "quantity": 1}]},
                    headers=owner_h)
-    assert r.status_code == 400
+    assert r.status_code == 409
 
 
 def test_cannot_edit_paid_invoice(client, owner_h):
@@ -143,9 +143,10 @@ def test_cannot_edit_paid_invoice(client, owner_h):
     inv = sell(client, owner_h, pk1, 1)
     r = client.put(f"/api/invoices/{inv['id']}", json={"items": [{"product_id": pk1, "quantity": 2}]},
                    headers=owner_h)
-    assert r.status_code == 400 and "BR-24" in r.json()["detail"]
+    assert r.status_code == 409 and "BR-24" in r.json()["detail"]
 
 
+# TC-STK-02 (SRS 11.3)
 def test_stock_movements_logged(client, owner_h):
     pk1 = product_id(client, owner_h, "PK001")
     inv = sell(client, owner_h, pk1, 3)
@@ -170,6 +171,7 @@ def test_product_update_cannot_change_stock_directly(client, owner_h):
     assert p["sale_price"] == 360_000
 
 
+# TC-STK-01 (SRS 11.3)
 def test_low_stock_filter(client, owner_h):
     items = client.get("/api/products", params={"stock": "out"}, headers=owner_h).json()["items"]
     assert [p["code"] for p in items] == ["PK002"]

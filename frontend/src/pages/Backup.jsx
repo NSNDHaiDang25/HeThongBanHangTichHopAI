@@ -19,7 +19,7 @@ export default function Backup() {
 
   const backup = async () => {
     setBusy(true)
-    try { await downloadPost('/admin/backup', `techstore-backup-${stamp()}.db`); toast('Đã tải bản sao lưu', 'success') } catch (e) { toast(e.message, 'error') } finally { setBusy(false) }
+    try { await downloadPost('/admin/backup', `techstoreai-backup-${stamp()}.db`); toast('Đã tải bản sao lưu', 'success') } catch (e) { toast(e.message, 'error') } finally { setBusy(false) }
   }
   const restore = async () => {
     const form = new FormData()

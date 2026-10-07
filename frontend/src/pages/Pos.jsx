@@ -166,6 +166,35 @@ function PaidDialog({ invoice, onClose }) {
   )
 }
 
+// ---------------------------------------------------------------- Gợi ý phụ kiện đi kèm (FR-AIA-07)
+function CrossSell({ productIds, onAdd }) {
+  const toast = useToast()
+  const [res, setRes] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const key = productIds.join(',')
+  useEffect(() => { setRes(null) }, [key])
+  const ask = async () => {
+    setBusy(true)
+    try { setRes(await api.post('/ai/advisor/cross-sell', { product_ids: productIds })) } catch (e) { toast(e.message, 'error') } finally { setBusy(false) }
+  }
+  if (!res) {
+    return <button className="btn sm ghost mt-2" onClick={ask} disabled={busy}><Icon name="sparkles" />{busy ? 'Đang gợi ý...' : 'Gợi ý phụ kiện đi kèm (AI)'}</button>
+  }
+  return (
+    <div className="cross-sell">
+      <div className="cross-sell-head"><Icon name="sparkles" /><span className="flex-1 strong">{res.answer}</span>
+        <button className="btn ghost sm icon-only" onClick={() => setRes(null)} aria-label="Đóng gợi ý"><Icon name="x" /></button></div>
+      {res.warning && <div className="muted small">{res.warning}</div>}
+      {res.suggestions.map((s) => (
+        <div key={s.code} className="cross-sell-item">
+          <div><div className="strong">{s.name} · {money(s.price)}</div><div className="muted small">{s.reason}</div></div>
+          <button className="btn sm" onClick={() => onAdd(s.code)}><Icon name="plus" />Thêm</button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------- Màn hình chính
 export default function Pos() {
   const toast = useToast()
@@ -279,6 +308,10 @@ export default function Pos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restored, location.state])
 
+  const addByCode = async (code) => {
+    try { addProduct(await api.get(`/products/by-code/${encodeURIComponent(code)}`)) } catch (err) { toast(err.message, 'error') }
+  }
+
   // FR-SAL-01: máy quét gửi mã như bàn phím rồi Enter
   const onScan = async (e) => {
     if (e.key !== 'Enter') return
@@ -388,6 +421,7 @@ export default function Pos() {
         </div>
 
         {lines.length > 0 && <>
+          <CrossSell productIds={[...new Set(lines.map((l) => l.product.id))]} onAdd={addByCode} />
           <div className="discount-row mt-3">
             <div className="input-icon flex-1"><Icon name="tag" />
               <input placeholder="Mã voucher" value={promo} onChange={(e) => setPromo(e.target.value.toUpperCase())} />
@@ -399,6 +433,11 @@ export default function Pos() {
               </div>
             )}
           </div>
+          {customer && cart?.points_max > 0 && Number(points) !== cart.points_max && (
+            <button type="button" className="btn sm ghost mt-2" onClick={() => setPoints(String(cart.points_max))}>
+              <Icon name="award" />Dùng tối đa {num(cart.points_max)} điểm
+            </button>
+          )}
           {cartErr && <p className="error mt-2">{cartErr}</p>}
           {cart && (
             <div className="totals mt-3">

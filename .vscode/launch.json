@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "SalesAI: chạy server (uvicorn)",
+            "name": "TechStoreAI: chạy server (uvicorn)",
             "type": "debugpy",
             "request": "launch",
             "module": "uvicorn",
